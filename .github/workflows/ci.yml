@@ -69,6 +69,9 @@ jobs:
       - name: TypeScript / Svelte Check
         run: npm run check
 
+      - name: Build Frontend
+        run: npm run build
+
       # -----------------------------------------------------------------------
       # Backend Checks
       # -----------------------------------------------------------------------
