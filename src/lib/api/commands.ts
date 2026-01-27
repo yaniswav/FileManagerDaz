@@ -1,0 +1,1123 @@
+/**
+ * # Commands API Client
+ *
+ * Core API layer for FileManagerDaz operations.
+ *
+ * ## Overview
+ *
+ * This module provides TypeScript bindings for all Tauri backend commands.
+ * It defines the shared types between frontend and backend, and wraps
+ * the `invoke` calls with proper error handling.
+ *
+ * ## Module Organization
+ *
+ * | Section                | Purpose                                  |
+ * |------------------------|------------------------------------------|
+ * | API Types              | Generic response and error types         |
+ * | Settings/Libraries     | DAZ library configuration                |
+ * | Source/Archive         | Archive extraction types                 |
+ * | Destination            | Intelligent destination proposal         |
+ * | Products               | Product database CRUD                    |
+ * | Maintenance            | Library cleanup and scanning             |
+ * | Normalize Batch        | Batch folder normalization               |
+ * | Watcher                | Folder watching for auto-import          |
+ * | Utility Helpers        | Formatting and parsing utilities         |
+ *
+ * ## Usage
+ *
+ * ```typescript
+ * import * as api from '$lib/api/commands';
+ *
+ * // Extract an archive
+ * const result = await api.processSource('/path/to/archive.zip');
+ *
+ * // List products
+ * const products = await api.listProducts();
+ * ```
+ */
+import { invoke } from '@tauri-apps/api/core';
+import { getIntlLocale } from '$lib/i18n';
+
+// =============================================================================
+// API TYPES
+// =============================================================================
+
+/**
+ * Generic API response wrapper.
+ * All backend commands return this structure for consistent error handling.
+ */
+export interface ApiResponse<T> {
+  /** Whether the operation succeeded. */
+  ok: boolean;
+  /** The result data if successful. */
+  data: T | null;
+  /** Error details if failed. */
+  error: ApiError | null;
+}
+
+/**
+ * API error with structured information.
+ */
+export interface ApiError {
+  /** Error code for programmatic handling (e.g., "ARCHIVE_ERROR"). */
+  code: string;
+  /** Human-readable error message. */
+  message: string;
+  /** Optional additional context. */
+  details: string | null;
+}
+
+// =============================================================================
+// SETTINGS / LIBRARIES TYPES
+// =============================================================================
+
+/**
+ * A DAZ Studio content library.
+ * Libraries are directories where DAZ content is installed.
+ */
+export interface DazLibrary {
+  /** Absolute path to the library. */
+  path: string;
+  /** Display name (usually derived from path). */
+  name: string;
+  /** Whether the directory exists on disk. */
+  exists: boolean;
+  /** Whether this is the default library for imports. */
+  isDefault: boolean;
+}
+
+/**
+ * Complete application configuration.
+ * Retrieved from persistent settings.
+ */
+export interface AppConfig {
+  /** Path to the SQLite database file. */
+  databasePath: string;
+  /** Temporary extraction directory. */
+  tempDir: string;
+  /** Directory for thumbnail cache. */
+  thumbnailsDir: string;
+  /** Configured DAZ libraries. */
+  dazLibraries: DazLibrary[];
+  /** Default destination for imports, if set. */
+  defaultDestination: string | null;
+  /** Whether RAR extraction is available. */
+  canExtractRar: boolean;
+  /** Whether 7z extraction is available. */
+  canExtract7z: boolean;
+  /** Path to UnRAR executable, if found. */
+  unrarPath: string | null;
+  /** Path to 7-Zip executable, if found. */
+  sevenzipPath: string | null;
+  /** Move archives to trash after successful import. */
+  trashArchivesAfterImport: boolean;
+  /** Enable detailed extraction timing logs (dev mode). */
+  devLogExtractionTimings: boolean;
+  /** Enable detailed extraction move logs (dev mode). */
+  devLogExtractionDetails: boolean;
+  /** UI language ("fr" or "en"). */
+  language: string;
+}
+
+/**
+ * Result of automatic library detection.
+ */
+export interface DetectionResult {
+  /** All detected libraries. */
+  libraries: DazLibrary[];
+  /** Number of newly discovered libraries. */
+  newCount: number;
+}
+
+// =============================================================================
+// SOURCE / ARCHIVE TYPES
+// =============================================================================
+
+/** Source type: archive file or directory. */
+export type SourceType = 'archive' | 'directory';
+
+/** Supported archive formats. */
+export type ArchiveFormat = 'zip' | 'rar' | 'sevenzip';
+
+/** Detected DAZ content categories. */
+export type ContentType = 
+  | 'character' 
+  | 'clothing' 
+  | 'hair' 
+  | 'prop' 
+  | 'environment' 
+  | 'pose' 
+  | 'light' 
+  | 'material' 
+  | 'script' 
+  | 'morph' 
+  | 'hdri' 
+  | 'other';
+
+/**
+ * Analysis summary for DAZ content detection.
+ * Generated by scanning extracted files for DAZ markers.
+ */
+export interface AnalysisSummary {
+  /** Whether this appears to be DAZ content. */
+  is_daz_content: boolean;
+  /** Primary content type. */
+  content_type: ContentType;
+  /** DAZ-specific folders found (e.g., "data", "Runtime"). */
+  daz_folders: string[];
+  /** Wrapper folder to strip during import. */
+  wrapper_folder: string | null;
+  /** Number of DAZ-specific files found. */
+  daz_file_count: number;
+  /** Number of texture files found. */
+  texture_count: number;
+  /** Auto-generated tags based on content. */
+  suggested_tags: string[];
+  /** Detected figure compatibility (e.g., "Genesis 9"). */
+  detected_figures: string[];
+  /** Any warnings during analysis. */
+  warnings: string[];
+}
+
+/**
+ * Result from processing a single source.
+ */
+export interface ExtractResult {
+  /** Original source path. */
+  sourcePath: string;
+  /** Extraction destination path. */
+  destination: string;
+  /** Number of files extracted. */
+  fileCount: number;
+  /** Number of directories created. */
+  dirCount: number;
+  /** Total size in bytes. */
+  totalSize: number;
+  /** Type of source processed. */
+  sourceType: SourceType;
+  /** Archive format, if applicable. */
+  archiveFormat: ArchiveFormat | null;
+  /** Top-level entries in the extraction. */
+  rootEntries: string[];
+  /** Content analysis results. */
+  analysis: AnalysisSummary | null;
+}
+
+/**
+ * Information about a source before processing.
+ */
+export interface SourceInfo {
+  /** Absolute path to the source. */
+  path: string;
+  /** Display name (filename). */
+  name: string;
+  /** Type: archive or directory. */
+  sourceType: SourceType;
+  /** Archive format, if applicable. */
+  archiveFormat: ArchiveFormat | null;
+  /** File size in bytes, if available. */
+  fileSize: number | null;
+  /** Whether this format can be extracted. */
+  isSupported: boolean;
+}
+
+/**
+ * Information about supported extraction formats.
+ */
+export interface SupportedFormats {
+  /** List of supported file extensions. */
+  formats: string[];
+  /** Whether RAR extraction is available. */
+  canExtractRar: boolean;
+  /** Whether 7z extraction is available. */
+  canExtract7z: boolean;
+}
+
+/**
+ * Result from batch processing.
+ */
+export interface BatchResult {
+  /** Source path that was processed. */
+  path: string;
+  /** Whether processing succeeded. */
+  success: boolean;
+  /** Extraction result if successful. */
+  result: ExtractResult | null;
+  /** Error message if failed. */
+  error: string | null;
+}
+
+/**
+ * Information about a nested archive found during recursive extraction.
+ */
+export interface NestedArchiveInfo {
+  /** Archive filename. */
+  name: string;
+  /** Archive format. */
+  format: ArchiveFormat;
+  /** Nesting depth (1 = first level nested). */
+  depth: number;
+  /** Number of files in this archive. */
+  file_count: number;
+  /** Total size of extracted content. */
+  total_size: number;
+}
+
+/**
+ * Result from recursive extraction.
+ * Includes statistics about nested archives.
+ */
+export interface RecursiveExtractResult {
+  /** Original source path. */
+  source_path: string;
+  /** Final destination path. */
+  destination: string;
+  /** Total files across all extraction levels. */
+  total_files: number;
+  /** Total size in bytes. */
+  total_size: number;
+  /** Top-level archive format. */
+  archive_format: ArchiveFormat | null;
+  /** Information about nested archives. */
+  nested_archives: NestedArchiveInfo[];
+  /** Content analysis results. */
+  analysis: AnalysisSummary | null;
+  /** Maximum nesting depth reached. */
+  max_depth_reached: number;
+  /** Whether content was moved to library. */
+  moved_to_library: boolean;
+  /** All source archive paths (for trash after import). */
+  source_archive_paths: string[];
+}
+
+// =============================================================================
+// INTELLIGENT DESTINATION TYPES
+// =============================================================================
+
+/**
+ * An alternative destination suggestion.
+ */
+export interface DestinationAlternative {
+  /** Full path to the alternative. */
+  path: string;
+  /** Library root path. */
+  libraryPath: string;
+  /** Subfolder within the library. */
+  subfolder: string;
+  /** Human-readable label. */
+  label: string;
+  /** Detected content type. */
+  contentType: ContentType | null;
+  /** Confidence level (0.0 - 1.0). */
+  confidence: number;
+}
+
+/**
+ * Intelligent destination proposal for imported content.
+ * Generated by analyzing content and existing library structure.
+ */
+export interface DestinationProposal {
+  /** Recommended full path. */
+  recommendedPath: string;
+  /** Base library path. */
+  libraryPath: string;
+  /** Suggested subfolder hierarchy. */
+  subfolders: string[];
+  /** Alternative full paths. */
+  fullPaths: string[];
+  /** Detected content type. */
+  contentType: ContentType | null;
+  /** Confidence level (0.0 - 1.0). */
+  confidence: number;
+  /** Explanation of the suggestion. */
+  reason: string;
+  /** Alternative destinations. */
+  alternatives: DestinationAlternative[];
+}
+
+/**
+ * Result from moving content to a destination.
+ */
+export interface MoveResult {
+  /** Whether the move succeeded. */
+  success: boolean;
+  /** Original source path. */
+  sourcePath: string;
+  /** Final destination path. */
+  destinationPath: string;
+  /** Number of files moved. */
+  filesMoved: number;
+  /** Number of files skipped (duplicates). */
+  filesSkipped: number;
+  /** Any errors encountered. */
+  errors: string[];
+}
+
+// =============================================================================
+// PRODUCT TYPES
+// =============================================================================
+
+/**
+ * An installed product tracked in the database.
+ */
+/**
+ * An installed product tracked in the database.
+ */
+export interface Product {
+  /** Database primary key. */
+  id: number;
+  /** Product display name. */
+  name: string;
+  /** Installation path. */
+  path: string;
+  /** Product origin ("import" or "library"). */
+  origin?: string | null;
+  /** Library root path for catalog entries. */
+  libraryPath?: string | null;
+  /** Support metadata file relative path. */
+  supportFile?: string | null;
+  /** Product token/SKU. */
+  productToken?: string | null;
+  /** Global ID from metadata. */
+  globalId?: string | null;
+  /** Vendor or artist. */
+  vendor?: string | null;
+  /** Original archive path, if imported from archive. */
+  sourceArchive: string | null;
+  /** Detected content type. */
+  contentType: string | null;
+  /** Full DAZ category paths. */
+  categories: string[];
+  /** Cached thumbnail path. */
+  thumbnailPath?: string | null;
+  /** ISO timestamp of installation. */
+  installedAt: string;
+  /** Comma-separated tags. */
+  tags: string;
+  /** User notes. */
+  notes: string | null;
+  /** Number of files in the product. */
+  filesCount: number;
+  /** Total size in bytes. */
+  totalSize: number;
+}
+
+/**
+ * Parameters for creating a new product.
+ */
+export interface CreateProductParams {
+  name: string;
+  path: string;
+  sourceArchive?: string;
+  tags?: string[];
+  contentType?: string;
+  filesCount?: number;
+  totalSize?: number;
+}
+
+/**
+ * Parameters for updating an existing product.
+ */
+export interface UpdateProductParams {
+  name?: string;
+  tags?: string[];
+  contentType?: string;
+  notes?: string;
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+/**
+ * Unwraps an API response, throwing on error.
+ * @throws Error if the response indicates failure.
+ */
+async function unwrap<T>(response: ApiResponse<T>): Promise<T> {
+  if (!response.ok || response.data === null) {
+    const err = response.error;
+    throw new Error(err?.message ?? 'Unknown error');
+  }
+  return response.data;
+}
+
+// =============================================================================
+// SYSTEM COMMANDS
+// =============================================================================
+
+/**
+ * Ping the backend to check connectivity.
+ * @returns "pong" if the backend is responsive.
+ */
+export async function ping(): Promise<string> {
+  return await invoke<string>('ping');
+}
+
+// =============================================================================
+// SOURCE / ARCHIVE COMMANDS
+// =============================================================================
+
+/**
+ * Processes a source (archive or folder) and extracts its contents.
+ * @param path - Path to the archive or directory.
+ * @returns Extraction results.
+ */
+export async function processSource(path: string): Promise<ExtractResult> {
+  const response = await invoke<ApiResponse<ExtractResult>>('process_source_cmd', { path });
+  return unwrap(response);
+}
+
+/**
+ * Gets information about a source without processing it.
+ * @param path - Path to examine.
+ * @returns Source metadata.
+ */
+export async function getSourceInfo(path: string): Promise<SourceInfo> {
+  const response = await invoke<ApiResponse<SourceInfo>>('get_source_info', { path });
+  return unwrap(response);
+}
+
+/**
+ * Gets the list of supported archive formats.
+ * @returns Format support information.
+ */
+export async function getSupportedFormats(): Promise<SupportedFormats> {
+  const response = await invoke<ApiResponse<SupportedFormats>>('get_supported_formats_cmd');
+  return unwrap(response);
+}
+
+/**
+ * Processes multiple sources in batch.
+ * @param paths - Array of paths to process.
+ * @returns Results for each path.
+ */
+export async function processSourcesBatch(paths: string[]): Promise<BatchResult[]> {
+  const response = await invoke<ApiResponse<BatchResult[]>>('process_sources_batch', { paths });
+  return unwrap(response);
+}
+
+/**
+ * Processes a source with recursive nested archive extraction.
+ * @param path - Path to the source.
+ * @param maxDepth - Maximum nesting depth (default: 5).
+ * @returns Recursive extraction results.
+ */
+export async function processSourceRecursive(path: string, maxDepth: number = 5): Promise<RecursiveExtractResult> {
+  const response = await invoke<ApiResponse<RecursiveExtractResult>>('process_source_recursive_cmd', { path, maxDepth });
+  return unwrap(response);
+}
+
+/**
+ * Proposes an intelligent destination for extracted content.
+ * @param tempPath - Path to the extracted content.
+ * @param libraryPath - Optional target library.
+ * @returns Destination suggestions.
+ */
+export async function proposeDestination(tempPath: string, libraryPath?: string): Promise<DestinationProposal> {
+  const response = await invoke<ApiResponse<DestinationProposal>>('propose_destination_cmd', { 
+    temp_path: tempPath, 
+    library_path: libraryPath ?? null 
+  });
+  return unwrap(response);
+}
+
+/**
+ * Moves content to a user-chosen destination.
+ * @param sourcePath - Extracted content path.
+ * @param destinationPath - Target path.
+ * @returns Move operation results.
+ */
+export async function moveToCustomDestination(sourcePath: string, destinationPath: string): Promise<MoveResult> {
+  const response = await invoke<ApiResponse<MoveResult>>('move_to_custom_destination', { 
+    source_path: sourcePath, 
+    destination_path: destinationPath 
+  });
+  return unwrap(response);
+}
+
+// =============================================================================
+// PRODUCTS COMMANDS (CRUD)
+// =============================================================================
+
+/**
+ * Lists all products in the database.
+ * @returns All tracked products.
+ */
+export async function listProducts(): Promise<Product[]> {
+  const response = await invoke<ApiResponse<Product[]>>('list_products');
+  return unwrap(response);
+}
+
+/**
+ * Lists products indexed from DAZ libraries.
+ * @returns Library catalog products.
+ */
+export async function listLibraryProducts(): Promise<Product[]> {
+  const response = await invoke<ApiResponse<Product[]>>('list_library_products');
+  return unwrap(response);
+}
+
+/**
+ * Backfills products from completed import tasks (for migrations).
+ * @returns Number of products created.
+ */
+export async function backfillProductsFromImportTasks(): Promise<number> {
+  const response = await invoke<ApiResponse<number>>('backfill_products_from_import_tasks');
+  return unwrap(response);
+}
+
+/**
+ * Creates a new product record.
+ * @param params - Product creation parameters.
+ * @returns The created product.
+ */
+export async function createProduct(params: CreateProductParams): Promise<Product> {
+  const response = await invoke<ApiResponse<Product>>('create_product', { params });
+  return unwrap(response);
+}
+
+/**
+ * Retrieves a product by ID.
+ * @param id - Product database ID.
+ * @returns The product, or null if not found.
+ */
+export async function getProduct(id: number): Promise<Product | null> {
+  const response = await invoke<ApiResponse<Product | null>>('get_product', { id });
+  return unwrap(response);
+}
+
+/**
+ * Updates an existing product.
+ * @param id - Product database ID.
+ * @param params - Fields to update.
+ * @returns The updated product.
+ */
+export async function updateProduct(id: number, params: UpdateProductParams): Promise<Product> {
+  const response = await invoke<ApiResponse<Product>>('update_product', { id, params });
+  return unwrap(response);
+}
+
+/**
+ * Deletes a product from the database.
+ * @param id - Product database ID.
+ * @returns True if deleted successfully.
+ */
+export async function deleteProduct(id: number): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('delete_product', { id });
+  return unwrap(response);
+}
+
+/**
+ * Searches products by name or tags.
+ * @param query - Search query string.
+ * @returns Matching products.
+ */
+export async function searchProducts(query: string): Promise<Product[]> {
+  const response = await invoke<ApiResponse<Product[]>>('search_products', { query });
+  return unwrap(response);
+}
+
+/**
+ * Searches products indexed from DAZ libraries.
+ * @param query - Search query string.
+ * @returns Matching products.
+ */
+export async function searchLibraryProducts(query: string): Promise<Product[]> {
+  const response = await invoke<ApiResponse<Product[]>>('search_library_products', { query });
+  return unwrap(response);
+}
+
+/**
+ * Scans DAZ libraries and rebuilds the product catalog.
+ * @param libraryPath - Optional library path to scan.
+ * @returns Number of products indexed.
+ */
+export async function scanLibraryProducts(libraryPath?: string): Promise<number> {
+  const response = await invoke<ApiResponse<number>>('scan_library_products', {
+    library_path: libraryPath ?? null,
+  });
+  return unwrap(response);
+}
+
+// =============================================================================
+// SETTINGS / LIBRARIES COMMANDS
+// =============================================================================
+
+/**
+ * Gets the complete application configuration.
+ * @returns Current configuration state.
+ */
+export async function getAppConfig(): Promise<AppConfig> {
+  const response = await invoke<ApiResponse<AppConfig>>('get_app_config');
+  return unwrap(response);
+}
+
+/**
+ * Lists all configured DAZ libraries.
+ * @returns Array of library configurations.
+ */
+export async function listDazLibraries(): Promise<DazLibrary[]> {
+  const response = await invoke<ApiResponse<DazLibrary[]>>('list_daz_libraries');
+  return unwrap(response);
+}
+
+/**
+ * Automatically detects DAZ libraries on the system.
+ * Scans common locations for DAZ Studio content directories.
+ * @returns Detection results with new library count.
+ */
+export async function detectDazLibraries(): Promise<DetectionResult> {
+  const response = await invoke<ApiResponse<DetectionResult>>('detect_daz_libraries');
+  return unwrap(response);
+}
+
+/**
+ * Adds a new DAZ library.
+ * @param path - Path to the library directory.
+ * @returns The created library configuration.
+ */
+export async function addDazLibrary(path: string): Promise<DazLibrary> {
+  const response = await invoke<ApiResponse<DazLibrary>>('add_daz_library', { path });
+  return unwrap(response);
+}
+
+/**
+ * Removes a DAZ library from configuration.
+ * Does not delete the actual directory.
+ * @param path - Path of the library to remove.
+ * @returns True if removed successfully.
+ */
+export async function removeDazLibrary(path: string): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('remove_daz_library', { path });
+  return unwrap(response);
+}
+
+/**
+ * Sets the default library for imports.
+ * @param path - Path of the library to set as default.
+ * @returns True if set successfully.
+ */
+export async function setDefaultLibrary(path: string): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_default_library', { path });
+  return unwrap(response);
+}
+
+/**
+ * Changes the temporary extraction directory.
+ * @param path - New temporary directory path.
+ * @returns True if set successfully.
+ */
+export async function setTempDir(path: string): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_temp_dir', { path });
+  return unwrap(response);
+}
+
+/**
+ * Re-detects external extraction tools (UnRAR, 7-Zip).
+ * Updates the configuration with found tool paths.
+ * @returns Updated configuration.
+ */
+export async function detectExternalTools(): Promise<AppConfig> {
+  const response = await invoke<ApiResponse<AppConfig>>('detect_external_tools');
+  return unwrap(response);
+}
+
+/**
+ * Enables or disables moving archives to trash after import.
+ * @param enabled - Whether to enable the feature.
+ * @returns True if set successfully.
+ */
+export async function setTrashArchivesAfterImport(enabled: boolean): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_trash_archives_after_import', { enabled });
+  return unwrap(response);
+}
+
+/**
+ * Enables or disables developer extraction timing logs.
+ * @param enabled - Whether to enable timing logs.
+ * @returns True if set successfully.
+ */
+export async function setDevLogExtractionTimings(enabled: boolean): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_dev_log_extraction_timings', { enabled });
+  return unwrap(response);
+}
+
+/**
+ * Enables or disables detailed extraction move logs.
+ * @param enabled - Whether to enable move logs.
+ * @returns True if set successfully.
+ */
+export async function setDevLogExtractionDetails(enabled: boolean): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_dev_log_extraction_details', { enabled });
+  return unwrap(response);
+}
+
+/**
+ * Sets the UI language.
+ * @param language - Language code ("fr" or "en").
+ * @returns The new language setting.
+ */
+export async function setLanguage(language: string): Promise<string> {
+  const response = await invoke<ApiResponse<string>>('set_language', { language });
+  return unwrap(response);
+}
+
+/**
+ * Result of moving a file to trash.
+ */
+export interface TrashResult {
+  /** Whether the file was trashed. */
+  trashed: boolean;
+  /** Path of the trashed file. */
+  path: string;
+  /** Error message if trash failed. */
+  error: string | null;
+}
+
+/**
+ * Moves a source archive to trash after successful import.
+ * @param sourcePath - Original archive path.
+ * @param destinationPath - Where content was imported to.
+ * @returns Trash operation result.
+ */
+export async function trashSourceArchive(sourcePath: string, destinationPath: string): Promise<TrashResult> {
+  const response = await invoke<ApiResponse<TrashResult>>('trash_source_archive', { sourcePath, destinationPath });
+  return unwrap(response);
+}
+
+// =============================================================================
+// MAINTENANCE TYPES
+// =============================================================================
+
+/** Types of maintenance issues that can be detected. */
+export type MaintenanceIssueType = 
+  | 'Duplicate'
+  | 'SimilarName'
+  | 'Orphan'
+  | 'EmptyFolder'
+  | 'TempFile';
+
+/**
+ * A maintenance issue detected in a library.
+ */
+export interface MaintenanceIssue {
+  /** Type of issue. */
+  type: MaintenanceIssueType;
+  /** Path to the problematic file/folder. */
+  path: string;
+  /** For Duplicate: path of the original file. */
+  duplicateOf?: string;
+  /** For Duplicate: file hash. */
+  hash?: string;
+  /** For SimilarName: path of similar file. */
+  similarTo?: string;
+  /** For SimilarName: similarity score (0-1). */
+  similarity?: number;
+  /** For Orphan/TempFile: file size. */
+  size?: number;
+  /** For Orphan: detected file type. */
+  fileType?: string;
+}
+
+/**
+ * Summary of a maintenance scan.
+ */
+export interface MaintenanceSummary {
+  /** Total files scanned. */
+  totalFilesScanned: number;
+  /** Total size scanned in bytes. */
+  totalSizeScanned: number;
+  /** Issues found. */
+  issues: MaintenanceIssue[];
+  /** Disk space that could be recovered. */
+  recoverableSpace: number;
+  /** Scan duration in milliseconds. */
+  scanDurationMs: number;
+}
+
+/**
+ * Options for maintenance scans.
+ */
+export interface ScanOptions {
+  /** Detect duplicate files by hash. */
+  detectDuplicates?: boolean;
+  /** Detect files with similar names. */
+  detectSimilarNames?: boolean;
+  /** Detect orphaned files. */
+  detectOrphans?: boolean;
+  /** Detect empty folders. */
+  detectEmptyFolders?: boolean;
+  /** Detect temporary files. */
+  detectTempFiles?: boolean;
+  /** File extensions to ignore. */
+  ignoreExtensions?: string[];
+  /** Minimum file size for hash calculation. */
+  minSizeForHash?: number;
+}
+
+/**
+ * Result of a cleanup operation.
+ */
+export interface CleanupResult {
+  /** Whether cleanup succeeded. */
+  success: boolean;
+  /** Number of files deleted. */
+  filesDeleted: number;
+  /** Number of folders deleted. */
+  foldersDeleted: number;
+  /** Total space freed in bytes. */
+  spaceFreed: number;
+  /** Any errors encountered. */
+  errors: string[];
+  /** Backup location, if backup was enabled. */
+  backupPath: string | null;
+}
+
+// =============================================================================
+// MAINTENANCE COMMANDS
+// =============================================================================
+
+/**
+ * Scans a library for maintenance issues.
+ * @param libraryPath - Path to scan.
+ * @param options - Scan options.
+ * @returns Scan summary with issues.
+ */
+export async function scanLibrary(libraryPath: string, options?: ScanOptions): Promise<MaintenanceSummary> {
+  const response = await invoke<ApiResponse<MaintenanceSummary>>('scan_library_cmd', { 
+    libraryPath, 
+    options: options ?? null 
+  });
+  return unwrap(response);
+}
+
+/**
+ * Scans all configured libraries for maintenance issues.
+ * @param options - Scan options.
+ * @returns Combined scan summary.
+ */
+export async function scanAllLibraries(options?: ScanOptions): Promise<MaintenanceSummary> {
+  const response = await invoke<ApiResponse<MaintenanceSummary>>('scan_all_libraries_cmd', { 
+    options: options ?? null 
+  });
+  return unwrap(response);
+}
+
+/**
+ * Deletes specified files with optional backup.
+ * @param files - Array of file paths to delete.
+ * @param backup - Whether to backup before deleting (default: true).
+ * @param backupDir - Custom backup directory.
+ * @returns Cleanup result with statistics.
+ */
+export async function cleanupFiles(files: string[], backup: boolean = true, backupDir?: string): Promise<CleanupResult> {
+  const response = await invoke<ApiResponse<CleanupResult>>('cleanup_files_cmd', { 
+    files, 
+    backup, 
+    backupDir: backupDir ?? null 
+  });
+  return unwrap(response);
+}
+
+/**
+ * Removes empty folders from a library.
+ * @param libraryPath - Library to clean.
+ * @returns Cleanup result with folder count.
+ */
+export async function cleanupEmptyFolders(libraryPath: string): Promise<CleanupResult> {
+  const response = await invoke<ApiResponse<CleanupResult>>('cleanup_empty_folders_cmd', { libraryPath });
+  return unwrap(response);
+}
+
+/**
+ * Performs a quick maintenance scan for overview.
+ * Faster than full scan, suitable for dashboard display.
+ * @returns Summary of issues found.
+ */
+export async function quickMaintenanceScan(): Promise<MaintenanceSummary> {
+  const response = await invoke<ApiResponse<MaintenanceSummary>>('quick_maintenance_scan_cmd');
+  return unwrap(response);
+}
+
+// =============================================================================
+// NORMALIZE BATCH TYPES
+// =============================================================================
+
+/**
+ * Result of a batch normalization operation.
+ */
+export interface NormalizeBatchResult {
+  /** Original source folder. */
+  sourcePath: string;
+  /** Destination folder. */
+  destinationPath: string;
+  /** Number of archives extracted. */
+  archivesExtracted: number;
+  /** Number of folders normalized. */
+  foldersNormalized: number;
+  /** Number of folders merged. */
+  foldersMerged: number;
+  /** Number of files skipped. */
+  filesSkipped: number;
+  /** Total files processed. */
+  totalFiles: number;
+  /** Total size in bytes. */
+  totalSize: number;
+  /** Any errors encountered. */
+  errors: string[];
+}
+
+/**
+ * Progress event during normalization.
+ */
+export interface NormalizeStepEvent {
+  /** Current step description. */
+  step: string;
+  /** Optional details. */
+  detail: string | null;
+}
+
+// =============================================================================
+// NORMALIZE BATCH COMMANDS
+// =============================================================================
+
+/**
+ * Normalizes and merges a messy folder into a DAZ library.
+ * Extracts archives, flattens nested structures, merges duplicates.
+ * @param sourceFolder - Folder to normalize.
+ * @param destination - Optional target destination.
+ * @returns Normalization results.
+ */
+export async function normalizeBatch(sourceFolder: string, destination?: string): Promise<NormalizeBatchResult> {
+  const response = await invoke<ApiResponse<NormalizeBatchResult>>('normalize_batch_cmd', {
+    sourcePath: sourceFolder,
+    destinationPath: destination ?? null,
+    taskId: null,
+  });
+  return unwrap(response);
+}
+
+// =============================================================================
+// WATCHER TYPES (FOLDER WATCHING)
+// =============================================================================
+
+/**
+ * A file system event detected by the watcher.
+ */
+export interface WatchEvent {
+  /** Full path to the file. */
+  path: string;
+  /** Type of change. */
+  eventType: 'created' | 'modified' | 'removed';
+  /** Filename only. */
+  fileName: string;
+}
+
+/**
+ * Current state of the folder watcher.
+ */
+export interface WatcherInfo {
+  /** Whether watching is active. */
+  isWatching: boolean;
+  /** Currently watched path, if any. */
+  watchPath: string | null;
+}
+
+// =============================================================================
+// WATCHER COMMANDS
+// =============================================================================
+
+/**
+ * Starts watching a folder for new archives.
+ * @param path - Folder to watch.
+ * @returns True if watching started successfully.
+ */
+export async function startWatching(path: string): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('start_watching', { path });
+  return unwrap(response);
+}
+
+/**
+ * Stops folder watching.
+ * @returns True if stopped successfully.
+ */
+export async function stopWatching(): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('stop_watching');
+  return unwrap(response);
+}
+
+/**
+ * Gets the current watcher state.
+ * @returns Watcher information.
+ */
+export async function getWatcherInfo(): Promise<WatcherInfo> {
+  const response = await invoke<ApiResponse<WatcherInfo>>('get_watcher_info');
+  return unwrap(response);
+}
+
+/**
+ * Polls for pending watch events.
+ * @returns Array of new events since last poll.
+ */
+export async function pollWatchEvents(): Promise<WatchEvent[]> {
+  const response = await invoke<ApiResponse<WatchEvent[]>>('poll_watch_events');
+  return unwrap(response);
+}
+
+/**
+ * Scans the watched folder for existing archives.
+ * @returns Array of archive paths found.
+ */
+export async function scanWatchedFolder(): Promise<string[]> {
+  const response = await invoke<ApiResponse<string[]>>('scan_watched_folder');
+  return unwrap(response);
+}
+
+/**
+ * Gets the system Downloads folder path.
+ * @returns Downloads path, or null if not found.
+ */
+export async function getDownloadsFolder(): Promise<string | null> {
+  const response = await invoke<ApiResponse<string | null>>('get_downloads_folder');
+  return unwrap(response);
+}
+
+// =============================================================================
+// UTILITY HELPERS
+// =============================================================================
+
+/**
+ * Formats a byte size to a human-readable string.
+ * @param bytes - Size in bytes.
+ * @returns Formatted string (e.g., "1.5 MB").
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+/**
+ * Formats an ISO date string to a localized date.
+ * @param isoDate - ISO 8601 date string.
+ * @returns Formatted date string.
+ */
+export function formatDate(isoDate: string): string {
+  return new Date(isoDate).toLocaleDateString(getIntlLocale(), {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Parses a comma-separated tag string into an array.
+ * @param tags - Comma-separated tags.
+ * @returns Array of trimmed, non-empty tags.
+ */
+export function parseTags(tags: string): string[] {
+  return tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
+}

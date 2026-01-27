@@ -1,0 +1,47 @@
+[package]
+name = "file-manager-daz"
+version = "0.1.0"
+edition = "2021"
+description = "DAZ 3D Content Manager"
+authors = ["Yanis"]
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tokio = { version = "1", features = ["rt", "sync"] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+tauri-plugin-fs = "2.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+zip = "2"
+sevenz-rust = "0.6"
+walkdir = "2"
+rayon = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+once_cell = "1"
+fs_extra = "1"
+which = "6"
+notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+blake3 = "1"
+trash = "5"
+quick-xml = "0.31"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

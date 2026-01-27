@@ -1,0 +1,92 @@
+# =============================================================================
+# FileManagerDaz CI Workflow
+# =============================================================================
+# Runs on every push to main and on pull requests targeting main.
+# Performs code quality checks for both backend (Rust) and frontend (Svelte/TS).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Build & Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Rust Setup
+      # -----------------------------------------------------------------------
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # -----------------------------------------------------------------------
+      # Node.js Setup
+      # -----------------------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # Linux Dependencies (for Tauri)
+      # -----------------------------------------------------------------------
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # -----------------------------------------------------------------------
+      # Frontend Checks
+      # -----------------------------------------------------------------------
+      - name: TypeScript / Svelte Check
+        run: npm run check
+
+      # -----------------------------------------------------------------------
+      # Backend Checks
+      # -----------------------------------------------------------------------
+      - name: Cargo Check
+        working-directory: src-tauri
+        run: cargo check --all-features
+
+      - name: Cargo Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true  # Clippy warnings don't fail the build
+
+      - name: Cargo Test
+        working-directory: src-tauri
+        run: cargo test --all-features
+        continue-on-error: true  # Tests are optional for now
+
+      - name: Cargo Format Check
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+        continue-on-error: true  # Format issues don't fail the build

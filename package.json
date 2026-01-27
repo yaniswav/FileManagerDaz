@@ -1,0 +1,53 @@
+{
+  "name": "file-manager-daz",
+  "version": "1.0.0",
+  "description": "A lightweight desktop utility for managing DAZ Studio content bundles",
+  "author": "Yanis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yaniswav/FileManagerDaz.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yaniswav/FileManagerDaz/issues"
+  },
+  "homepage": "https://github.com/yaniswav/FileManagerDaz#readme",
+  "keywords": [
+    "daz",
+    "daz-studio",
+    "daz3d",
+    "content-manager",
+    "tauri",
+    "svelte",
+    "rust",
+    "archive-extractor"
+  ],
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.0",
+    "@sveltejs/kit": "^2.0.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^20.0.0",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0"
+  }
+}
