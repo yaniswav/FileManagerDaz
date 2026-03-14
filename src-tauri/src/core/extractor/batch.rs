@@ -346,7 +346,8 @@ impl RobustBatchProcessor {
 
 /// Convenience function for batch processing with default settings
 pub fn process_batch_with_defaults(paths: Vec<PathBuf>) -> AppResult<BatchOperationResult> {
-    let settings = SETTINGS.read().unwrap();
+    let settings = SETTINGS.read()
+        .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
     let config = settings.to_resilience_config();
 
     RobustBatchProcessor::new(config).process_batch(paths)

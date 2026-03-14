@@ -905,7 +905,8 @@ pub async fn process_batch_robust(
 
     let result = spawn_blocking(move || {
         // Get resilience config from settings
-        let settings = SETTINGS.read().unwrap();
+        let settings = SETTINGS.read()
+            .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
         let config = settings.to_resilience_config();
 
         // Create processor with progress callback, checkpoint, and cleanup

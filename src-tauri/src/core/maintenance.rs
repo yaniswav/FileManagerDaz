@@ -322,7 +322,44 @@ pub fn scan_all_libraries(options: &ScanOptions) -> AppResult<MaintenanceSummary
 // Cleanup actions
 // ============================================================================
 
-/// Deletes selected files with optional backup
+/// Validates that a path is inside one of the configured DAZ libraries or the app temp dir.
+///
+/// Both paths are canonicalized to resolve symlinks, junctions, and relative segments.
+/// This prevents the frontend from requesting deletion of arbitrary system files.
+fn is_path_in_allowed_directory(path: &Path) -> bool {
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let settings = match SETTINGS.read() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    for library in &settings.daz_libraries {
+        if let Ok(lib_canonical) = library.canonicalize() {
+            if canonical.starts_with(&lib_canonical) {
+                return true;
+            }
+        }
+    }
+
+    // Also allow paths inside the temp dir (for temp file cleanup)
+    if let Ok(temp_canonical) = settings.temp_dir.canonicalize() {
+        if canonical.starts_with(&temp_canonical) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Deletes selected files with optional backup.
+///
+/// Every path is validated to be inside a configured DAZ library or the app
+/// temp directory before any deletion occurs. Paths outside these directories
+/// are rejected to prevent accidental or malicious deletion of system files.
 pub fn cleanup_files(
     files: &[String],
     backup: bool,
@@ -339,10 +376,15 @@ pub fn cleanup_files(
 
     // Create the backup folder if needed
     let backup_base = if backup {
-        let dir = backup_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-            let settings = SETTINGS.read().unwrap();
-            PathBuf::from(&settings.temp_dir).join("maintenance_backup")
-        });
+        let dir = match backup_dir {
+            Some(p) => p.to_path_buf(),
+            None => {
+                let settings = SETTINGS
+                    .read()
+                    .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
+                PathBuf::from(&settings.temp_dir).join("maintenance_backup")
+            }
+        };
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let backup_path = dir.join(format!("backup_{}", timestamp));
@@ -353,6 +395,10 @@ pub fn cleanup_files(
         None
     };
 
+    // Backup index prevents filename collisions when files from different
+    // directories share the same name (e.g. textures/a/diffuse.png and textures/b/diffuse.png)
+    let mut backup_index: usize = 0;
+
     for file_path in files {
         let path = Path::new(file_path);
 
@@ -360,30 +406,58 @@ pub fn cleanup_files(
             continue;
         }
 
-        // Taille avant suppression
-        let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        // Security: reject paths outside configured DAZ libraries and temp dir
+        if !is_path_in_allowed_directory(path) {
+            result.errors.push(format!(
+                "Rejected: '{}' is not inside a configured DAZ library",
+                file_path
+            ));
+            result.success = false;
+            continue;
+        }
 
-        // Backup if requested
+        // Determine file type BEFORE deletion (checking after would always return false)
+        let is_dir = path.is_dir();
+        let size = if is_dir {
+            0
+        } else {
+            fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+        };
+
+        // Backup if requested (only for files, not directories)
         if let Some(ref backup_base) = backup_base {
-            let relative = path.file_name().unwrap_or_default();
-            let backup_path = backup_base.join(relative);
+            if !is_dir {
+                let file_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
 
-            if let Err(e) = fs::copy(path, &backup_path) {
-                result
-                    .errors
-                    .push(format!("Backup failed for {}: {}", file_path, e));
-                continue;
+                // Use an index prefix to prevent collisions when files from
+                // different directories share the same name
+                let backup_name = format!("{:04}_{}", backup_index, file_name);
+                backup_index += 1;
+                let backup_dest = backup_base.join(backup_name);
+
+                if let Err(e) = fs::copy(path, &backup_dest) {
+                    result
+                        .errors
+                        .push(format!("Backup failed for {}: {}", file_path, e));
+                    continue;
+                }
             }
         }
 
-        // Suppression
-        match if path.is_dir() {
+        // Delete
+        let delete_result = if is_dir {
             fs::remove_dir_all(path)
         } else {
             fs::remove_file(path)
-        } {
+        };
+
+        match delete_result {
             Ok(_) => {
-                if path.is_dir() {
+                if is_dir {
                     result.folders_deleted += 1;
                 } else {
                     result.files_deleted += 1;
@@ -492,22 +566,23 @@ pub fn cleanup_library_complete(library_path: &Path) -> AppResult<CleanupResult>
             .unwrap_or_default();
         let file_name_lower = file_name.to_lowercase();
 
-        // Skip files inside DAZ standard folders (these are legitimate DAZ content)
-        let path_str = path.to_string_lossy().to_string();
-        let is_in_daz_folder = path_str.contains("\\data\\")
-            || path_str.contains("/data/")
-            || path_str.contains("\\People\\")
-            || path_str.contains("/People/")
-            || path_str.contains("\\Runtime\\")
-            || path_str.contains("/Runtime/")
-            || path_str.contains("\\Environments\\")
-            || path_str.contains("/Environments/")
-            || path_str.contains("\\Props\\")
-            || path_str.contains("/Props/")
-            || path_str.contains("\\Light Presets\\")
-            || path_str.contains("/Light Presets/")
-            || path_str.contains("\\Camera Presets\\")
-            || path_str.contains("/Camera Presets/");
+        // Skip files inside DAZ standard folders (these are legitimate DAZ content).
+        // Use the path relative to library_path to avoid false positives from
+        // parent directory names (e.g. a library at C:\mydata\ matching "data").
+        let relative = path.strip_prefix(library_path).unwrap_or(path);
+        let is_in_daz_folder = relative.components().any(|c| {
+            matches!(
+                c.as_os_str().to_str(),
+                Some(
+                    "data" | "People" | "Runtime" | "Environments" | "Props"
+                    | "Light Presets" | "Camera Presets" | "Lights" | "Cameras"
+                    | "Poses" | "Morphs" | "Shaders" | "Materials" | "Textures"
+                    | "Hairs" | "Figures" | "Scripts" | "Presets" | "Plugins"
+                    | "Documentation" | "ReadMe" | "General" | "Render Presets"
+                    | "Render Settings" | "Shader Presets" | "Templates" | "aniBlocks"
+                )
+            )
+        });
 
         if is_in_daz_folder {
             continue; // Don't touch DAZ content files
@@ -625,11 +700,11 @@ pub fn cleanup_library_complete(library_path: &Path) -> AppResult<CleanupResult>
 // Helpers
 // ============================================================================
 
-/// Calcule un hash rapide (premiers + derniers bytes)
+/// Computes a fast content hash using blake3 (first 8KB + file size).
+///
+/// blake3 is SIMD-optimized and produces 256-bit hashes, making collisions
+/// vastly less likely than the previous 64-bit DefaultHasher approach.
 fn compute_fast_hash(path: &Path) -> AppResult<String> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
     let file = fs::File::open(path)?;
     let metadata = file.metadata()?;
     let size = metadata.len();
@@ -638,11 +713,11 @@ fn compute_fast_hash(path: &Path) -> AppResult<String> {
     let mut buffer = vec![0u8; 8192.min(size as usize)];
     reader.read_exact(&mut buffer)?;
 
-    let mut hasher = DefaultHasher::new();
-    buffer.hash(&mut hasher);
-    size.hash(&mut hasher);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&buffer);
+    hasher.update(&size.to_le_bytes());
 
-    Ok(format!("{:x}", hasher.finish()))
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 /// Checks if a file is a temporary file

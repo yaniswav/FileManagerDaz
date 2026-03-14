@@ -340,8 +340,13 @@ fn has_daz_content(dir: &Path) -> bool {
     false
 }
 
-/// Checks if a folder contains .duf files
+/// Checks if a folder contains .duf/.dsa files, up to `max_depth` levels deep.
 fn has_duf_files(dir: &Path) -> bool {
+    has_duf_files_recursive(dir, 2)
+}
+
+/// Recursively checks for .duf/.dsa files with bounded depth to prevent stack overflow.
+fn has_duf_files_recursive(dir: &Path, remaining_depth: u32) -> bool {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -351,9 +356,8 @@ fn has_duf_files(dir: &Path) -> bool {
                         return true;
                     }
                 }
-            } else if path.is_dir() {
-                // Check recursively (max 2 levels)
-                if has_duf_files(&path) {
+            } else if path.is_dir() && remaining_depth > 0 {
+                if has_duf_files_recursive(&path, remaining_depth - 1) {
                     return true;
                 }
             }
@@ -387,7 +391,9 @@ fn merge_daz_content(source: &Path, destination: &Path) -> AppResult<()> {
                 if let Some(parent) = dest_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let _ = fs::copy(&entry_path, &dest_path);
+                if let Err(e) = fs::copy(&entry_path, &dest_path) {
+                    warn!("Failed to copy {:?} to Documentation: {}", entry_name, e);
+                }
             }
         }
     }
@@ -485,12 +491,16 @@ fn move_loose_daz_files(
 
         if fs::rename(file, &dest_path).is_err() {
             fs::copy(file, &dest_path)?;
-            let _ = fs::remove_file(file);
+            if let Err(e) = fs::remove_file(file) {
+                warn!("Failed to remove source file after copy {:?}: {}", file, e);
+            }
         }
 
         if thumbnail.exists() {
             let thumb_dest = dest_folder.join(thumbnail.file_name().unwrap_or_default());
-            let _ = fs::rename(&thumbnail, &thumb_dest);
+            if let Err(e) = fs::rename(&thumbnail, &thumb_dest) {
+                warn!("Failed to move thumbnail {:?}: {}", thumbnail, e);
+            }
         }
     }
 

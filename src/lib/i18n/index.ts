@@ -133,6 +133,7 @@ export function setLocale(newLocale: Locale): void {
     console.warn(`[i18n] Unsupported locale: ${newLocale}, falling back to ${DEFAULT_LOCALE}`);
     locale.set(DEFAULT_LOCALE);
   }
+  syncHtmlLang();
 }
 
 /**
@@ -150,6 +151,16 @@ export function initLocale(savedLocale?: string): void {
     locale.set(savedLocale as Locale);
   } else {
     locale.set(getInitialLocale());
+  }
+  syncHtmlLang();
+}
+
+/**
+ * Syncs the <html lang="..."> attribute with the current locale
+ */
+function syncHtmlLang(): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = get(locale);
   }
 }
 

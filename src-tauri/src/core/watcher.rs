@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Types
@@ -97,7 +97,7 @@ impl FolderWatcher {
                 .map_err(|e| format!("Failed to watch path: {}", e))?;
         }
 
-        *self.running.lock().unwrap() = true;
+        *self.running.lock().map_err(|_| "Running mutex poisoned".to_string())? = true;
         info!("Started watching: {:?}", self.watch_path);
 
         Ok(())
@@ -105,7 +105,11 @@ impl FolderWatcher {
 
     /// Stops the watcher
     pub fn stop(&mut self) {
-        *self.running.lock().unwrap() = false;
+        if let Ok(mut running) = self.running.lock() {
+            *running = false;
+        } else {
+            warn!("Could not lock running mutex during stop");
+        }
 
         if let Some(ref mut watcher) = self.watcher {
             let _ = watcher.unwatch(&self.watch_path);
@@ -119,7 +123,7 @@ impl FolderWatcher {
 
     /// Checks if the watcher is active
     pub fn is_running(&self) -> bool {
-        *self.running.lock().unwrap()
+        self.running.lock().map(|g| *g).unwrap_or(false)
     }
 
     /// Gets the next event (non-blocking)
@@ -136,7 +140,9 @@ impl FolderWatcher {
     /// Marks a file as processed
     #[allow(dead_code)]
     pub fn mark_processed(&self, path: &Path) {
-        self.processing.lock().unwrap().remove(path);
+        if let Ok(mut proc) = self.processing.lock() {
+            proc.remove(path);
+        }
     }
 
     /// Scans the folder for existing archives
@@ -201,7 +207,13 @@ fn process_notify_event(
 
             // Avoid duplicates
             {
-                let mut proc = processing.lock().unwrap();
+                let mut proc = match processing.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        error!("Processing mutex poisoned in watcher callback");
+                        return None;
+                    }
+                };
                 if proc.contains(&path) {
                     continue;
                 }
@@ -245,8 +257,8 @@ impl WatcherState {
 
     /// Starts watching a folder
     pub fn start(&self, path: &Path) -> Result<(), String> {
-        let mut watcher_guard = self.watcher.lock().unwrap();
-        let mut path_guard = self.watch_path.lock().unwrap();
+        let mut watcher_guard = self.watcher.lock().map_err(|_| "Watcher mutex poisoned".to_string())?;
+        let mut path_guard = self.watch_path.lock().map_err(|_| "Watch path mutex poisoned".to_string())?;
 
         // Stop old watcher if it exists
         if let Some(ref mut w) = *watcher_guard {
@@ -265,39 +277,41 @@ impl WatcherState {
 
     /// Stops watching
     pub fn stop(&self) {
-        let mut watcher_guard = self.watcher.lock().unwrap();
-        let mut path_guard = self.watch_path.lock().unwrap();
-
-        if let Some(ref mut w) = *watcher_guard {
-            w.stop();
+        if let Ok(mut watcher_guard) = self.watcher.lock() {
+            if let Some(ref mut w) = *watcher_guard {
+                w.stop();
+            }
+            *watcher_guard = None;
         }
 
-        *watcher_guard = None;
-        *path_guard = None;
+        if let Ok(mut path_guard) = self.watch_path.lock() {
+            *path_guard = None;
+        }
     }
 
     /// Checks if watching is active
     pub fn is_watching(&self) -> bool {
         self.watcher
             .lock()
-            .unwrap()
-            .as_ref()
-            .map(|w| w.is_running())
+            .ok()
+            .and_then(|g| g.as_ref().map(|w| w.is_running()))
             .unwrap_or(false)
     }
 
     /// Returns the watched path
     pub fn get_watch_path(&self) -> Option<PathBuf> {
-        self.watch_path.lock().unwrap().clone()
+        self.watch_path.lock().ok()?.clone()
     }
 
     /// Gets pending events
     pub fn poll_events(&self) -> Vec<WatchEvent> {
         let mut events = Vec::new();
 
-        if let Some(ref watcher) = *self.watcher.lock().unwrap() {
-            while let Some(event) = watcher.try_recv() {
-                events.push(event);
+        if let Ok(guard) = self.watcher.lock() {
+            if let Some(ref watcher) = *guard {
+                while let Some(event) = watcher.try_recv() {
+                    events.push(event);
+                }
             }
         }
 
@@ -308,9 +322,8 @@ impl WatcherState {
     pub fn scan_existing(&self) -> Vec<PathBuf> {
         self.watcher
             .lock()
-            .unwrap()
-            .as_ref()
-            .map(|w| w.scan_existing())
+            .ok()
+            .and_then(|g| g.as_ref().map(|w| w.scan_existing()))
             .unwrap_or_default()
     }
 }

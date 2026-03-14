@@ -213,11 +213,12 @@ function createImportsStore() {
         const taskId = `${now}-${i}`;
         const displayName = sourcePath.split(/[\\/]/).pop() || sourcePath;
 
-        // Persist to database via API
+        // Persist to database via API — skip task if backend fails
         try {
           await api.createImportTask(taskId, sourcePath, displayName, targetLibrary ?? null);
         } catch (err) {
-          console.error('[ImportsStore] Failed to persist task:', err);
+          console.error('[ImportsStore] Failed to persist task, skipping:', sourcePath, err);
+          continue;
         }
 
         const task: ImportTask = {
@@ -236,7 +237,9 @@ function createImportsStore() {
         newTasks.push(task);
       }
 
-      update((tasks) => [...newTasks, ...tasks]);
+      if (newTasks.length > 0) {
+        update((tasks) => [...newTasks, ...tasks]);
+      }
       return newTasks;
     },
 
@@ -532,6 +535,53 @@ export function stopStepListener(): void {
 // =============================================================================
 
 /**
+ * Deduplicates multi-part archive paths.
+ *
+ * When a user drops multiple parts of the same split archive
+ * (e.g., file.part1.rar, file.part2.rar, file.z01, file.zip),
+ * only keep the primary part to avoid duplicate processing.
+ */
+function deduplicateMultiParts(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const p of paths) {
+    const name = p.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+
+    // RAR .partN.rar: group by base name, keep only part1
+    const rarPartMatch = name.match(/^(.+)\.part(\d+)\.rar$/);
+    if (rarPartMatch) {
+      const base = rarPartMatch[1];
+      const key = `rar-part:${base}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        // Find part1 in the paths list, or use this one
+        const part1 = paths.find(pp => {
+          const n = pp.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+          return n.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.part0*1\\.rar$`));
+        });
+        result.push(part1 ?? p);
+      }
+      continue;
+    }
+
+    // RAR old-style .r00, .r01, etc.: skip these, keep only .rar
+    if (/\.[rR]\d{2}$/.test(name)) {
+      continue;
+    }
+
+    // ZIP split .z01, .z02, etc.: skip these, keep only .zip
+    if (/\.[zZ]\d{2}$/.test(name)) {
+      continue;
+    }
+
+    result.push(p);
+  }
+
+  return result;
+}
+
+/**
  * Processes multiple source paths sequentially.
  *
  * This is the main entry point for processing dropped archives.
@@ -551,7 +601,11 @@ export async function processMultipleSources(
   // Ensure event listener is active
   await initStepListener();
 
-  const tasks = await importsStore.addTasks(paths, targetLibrary);
+  // Deduplicate multi-part archives: skip secondary parts (.z01, .r00, .part2.rar, etc.)
+  // The backend auto-resolves to the first part, but we avoid creating duplicate tasks
+  const deduplicated = deduplicateMultiParts(paths);
+
+  const tasks = await importsStore.addTasks(deduplicated, targetLibrary);
 
   for (const task of tasks) {
     await processOneTask(task, onProcessed, onError);

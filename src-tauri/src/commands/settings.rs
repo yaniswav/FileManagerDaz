@@ -154,9 +154,13 @@ pub fn detect_daz_libraries() -> ApiResponse<DetectionResult> {
         Ok(mut settings) => {
             let before_count = settings.daz_libraries.len();
 
-            // Reset and re-detect
-            settings.daz_libraries.clear();
+            // Merge: detect new libraries without losing manually-added ones
+            let existing: std::collections::HashSet<PathBuf> =
+                settings.daz_libraries.iter().cloned().collect();
             settings.detect_daz_libraries();
+            // detect_daz_libraries pushes to the vec, so deduplicate
+            let mut seen = std::collections::HashSet::new();
+            settings.daz_libraries.retain(|p| seen.insert(p.clone()));
 
             // Save
             if let Err(e) = settings.save() {

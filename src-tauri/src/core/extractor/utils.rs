@@ -136,6 +136,8 @@ pub fn merge_directories(src: &Path, dest: &Path) -> AppResult<()> {
             if fs::rename(&entry_path, &dest_path).is_err() {
                 // Fallback to copy (cross-volume or other error)
                 fs::copy(&entry_path, &dest_path)?;
+                // Remove source after successful copy to complete the "move"
+                let _ = fs::remove_file(&entry_path);
             }
         }
     }
@@ -161,8 +163,11 @@ pub fn format_size(bytes: u64) -> String {
 }
 
 /// Finds all archives in a folder (recursive up to depth 10)
+///
+/// Skips secondary parts of multi-part archives to avoid double-processing.
 pub fn find_archives_in_dir(dir: &Path) -> AppResult<Vec<PathBuf>> {
     use super::ArchiveFormat;
+    use super::multipart;
 
     let mut archives = Vec::new();
 
@@ -170,6 +175,10 @@ pub fn find_archives_in_dir(dir: &Path) -> AppResult<Vec<PathBuf>> {
         let entry = entry?;
         if entry.file_type().is_file() {
             if ArchiveFormat::from_extension(entry.path()).is_some() {
+                // Skip secondary parts of multi-part archives
+                if multipart::is_secondary_part(entry.path()) {
+                    continue;
+                }
                 archives.push(entry.path().to_path_buf());
             }
         }

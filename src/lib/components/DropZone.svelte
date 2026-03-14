@@ -120,7 +120,7 @@
         multiple: true,
         directory: false,
         filters: [
-          { name: 'Archives', extensions: ['zip', 'rar', '7z'] },
+          { name: 'Archives', extensions: ['zip', 'rar', '7z', 'z01', 'z02', 'z03', 'z04', 'z05', 'r00', 'r01', 'r02'] },
           { name: 'All files', extensions: ['*'] }
         ],
         title: $t('import.selectFiles')
@@ -233,8 +233,8 @@
 
 <div class="drop-zone-container">
   <!-- Zone de drop principale -->
-  <button
-    type="button"
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
     class="drop-zone"
     class:drag-over={isDragOver}
     class:processing={isProcessing}
@@ -242,7 +242,6 @@
     ondragover={handleDragOver}
     ondragleave={handleDragLeave}
     ondrop={handleDrop}
-    onclick={openFilePicker}
   >
     {#if isProcessing}
       <div class="zone-content">
@@ -256,16 +255,16 @@
         <p class="title">{$t('import.dropZone.title')}</p>
         <p class="subtitle">{$t('import.dropZone.subtitle')}</p>
         <div class="buttons">
-          <span class="picker-btn" role="button" tabindex="0" onclick={(e) => { e.stopPropagation(); openFilePicker(); }} onkeydown={(e) => e.key === 'Enter' && openFilePicker()}>
+          <button type="button" class="picker-btn" onclick={openFilePicker} disabled={disabled || isProcessing}>
             📄 {$t('import.dropZone.files')}
-          </span>
-          <span class="picker-btn" role="button" tabindex="0" onclick={(e) => { e.stopPropagation(); openFolderPicker(); }} onkeydown={(e) => e.key === 'Enter' && openFolderPicker()}>
+          </button>
+          <button type="button" class="picker-btn" onclick={openFolderPicker} disabled={disabled || isProcessing}>
             📁 {$t('import.dropZone.folders')}
-          </span>
+          </button>
         </div>
       </div>
     {/if}
-  </button>
+  </div>
 
   <!-- Results list -->
   {#if hasResults}
@@ -394,7 +393,6 @@
     border-radius: 12px;
     background: var(--bg-secondary, #1a1a2e);
     transition: all 0.2s ease;
-    cursor: pointer;
     user-select: none;
     width: 100%;
     font-family: inherit;
@@ -462,6 +460,7 @@
     color: var(--text-primary, #fff);
     cursor: pointer;
     font-size: 0.85rem;
+    font-family: inherit;
     transition: all 0.15s;
   }
 

@@ -305,6 +305,10 @@ fn collect_source_archives(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
         // It's a direct archive
         if ArchiveFormat::from_extension(path).is_some() {
+            // If multi-part, collect all parts for trash
+            if let Some(mp_info) = super::multipart::detect_multipart(path) {
+                return mp_info.all_parts;
+            }
             return vec![path.to_path_buf()];
         }
     } else if path.is_dir() {
@@ -1274,15 +1278,37 @@ fn extract_single_nested_archive(
 }
 
 /// Extracts an archive according to its format
+///
+/// Handles multi-part archives automatically:
+/// - RAR multi-part: delegates to unrar with the first part
+/// - ZIP split: reassembles parts then extracts
 pub fn extract_archive_by_format(
     archive_path: &Path,
     dest_dir: &Path,
     format: ArchiveFormat,
 ) -> AppResult<ContentStats> {
-    match format {
-        ArchiveFormat::Zip => super::zip::extract_zip(archive_path, dest_dir),
-        ArchiveFormat::SevenZip => super::seven_zip::extract_7z(archive_path, dest_dir),
-        ArchiveFormat::Rar => super::rar::extract_rar(archive_path, dest_dir),
+    use super::multipart;
+
+    let mp_info = multipart::detect_multipart(archive_path);
+
+    match (&mp_info, format) {
+        // ZIP split: reassemble then extract
+        (Some(info), ArchiveFormat::Zip)
+            if info.format == multipart::MultiPartFormat::ZipSplit =>
+        {
+            let reassembled = multipart::reassemble_zip_split(info, dest_dir)?;
+            let stats = super::zip::extract_zip(&reassembled, dest_dir)?;
+            let _ = std::fs::remove_file(&reassembled);
+            Ok(stats)
+        }
+        // RAR multi-part: unrar handles it natively
+        (Some(info), ArchiveFormat::Rar) => {
+            super::rar::extract_rar(&info.first_part, dest_dir)
+        }
+        // Regular archives
+        (_, ArchiveFormat::Zip) => super::zip::extract_zip(archive_path, dest_dir),
+        (_, ArchiveFormat::SevenZip) => super::seven_zip::extract_7z(archive_path, dest_dir),
+        (_, ArchiveFormat::Rar) => super::rar::extract_rar(archive_path, dest_dir),
     }
 }
 

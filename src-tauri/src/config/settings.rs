@@ -33,6 +33,17 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
 
+/// Generates a pseudo-random suffix to ensure unique directory names.
+/// Uses a simple counter + process ID to avoid collisions without adding a rand dependency.
+fn rand_suffix() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    // Mix counter with PID for uniqueness across processes
+    count.wrapping_mul(2654435761) ^ pid
+}
+
 // =============================================================================
 // GLOBAL SETTINGS INSTANCE
 // =============================================================================
@@ -303,7 +314,8 @@ impl AppSettings {
     pub fn get_extraction_dir(&self, name: &str) -> AppResult<PathBuf> {
         let base = self.get_temp_dir()?;
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let dir = base.join(format!("{}_{}", name, timestamp));
+        let random: u32 = rand_suffix();
+        let dir = base.join(format!("{}_{}_{:04x}", name, timestamp, random));
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }

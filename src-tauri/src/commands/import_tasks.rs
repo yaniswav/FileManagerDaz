@@ -70,7 +70,7 @@ impl ImportTasksState {
             tracing::warn!("Failed to mark interrupted tasks: {}", e);
         }
 
-        *self.repository.lock().unwrap() = Some(repo);
+        *self.repository.lock().map_err(|_| "Repository mutex poisoned".to_string())? = Some(repo);
         Ok(())
     }
 

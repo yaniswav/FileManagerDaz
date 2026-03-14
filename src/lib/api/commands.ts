@@ -514,9 +514,9 @@ export async function processSourceRecursive(path: string, maxDepth: number = 5)
  * @returns Destination suggestions.
  */
 export async function proposeDestination(tempPath: string, libraryPath?: string): Promise<DestinationProposal> {
-  const response = await invoke<ApiResponse<DestinationProposal>>('propose_destination_cmd', { 
-    temp_path: tempPath, 
-    library_path: libraryPath ?? null 
+  const response = await invoke<ApiResponse<DestinationProposal>>('propose_destination_cmd', {
+    tempPath,
+    libraryPath: libraryPath ?? null
   });
   return unwrap(response);
 }
@@ -528,9 +528,9 @@ export async function proposeDestination(tempPath: string, libraryPath?: string)
  * @returns Move operation results.
  */
 export async function moveToCustomDestination(sourcePath: string, destinationPath: string): Promise<MoveResult> {
-  const response = await invoke<ApiResponse<MoveResult>>('move_to_custom_destination', { 
-    source_path: sourcePath, 
-    destination_path: destinationPath 
+  const response = await invoke<ApiResponse<MoveResult>>('move_to_custom_destination', {
+    sourcePath,
+    destinationPath
   });
   return unwrap(response);
 }
@@ -634,7 +634,7 @@ export async function searchLibraryProducts(query: string): Promise<Product[]> {
  */
 export async function scanLibraryProducts(libraryPath?: string): Promise<number> {
   const response = await invoke<ApiResponse<number>>('scan_library_products', {
-    library_path: libraryPath ?? null,
+    libraryPath: libraryPath ?? null,
   });
   return unwrap(response);
 }

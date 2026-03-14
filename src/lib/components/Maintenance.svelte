@@ -610,7 +610,7 @@
   }
 
   .group-count {
-    background: var(--accent-color, #6366f1);
+    background: var(--accent-color, #e94560);
     color: white;
     padding: 0.125rem 0.5rem;
     border-radius: 999px;
@@ -636,7 +636,7 @@
   }
 
   .issue-item.selected {
-    background: var(--accent-color, #6366f1)15;
+    background: var(--accent-color, #e94560)15;
   }
 
   .issue-item label {
@@ -757,12 +757,12 @@
   }
 
   .btn-primary {
-    background: var(--accent-color, #6366f1);
+    background: var(--accent-color, #e94560);
     color: white;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover, #4f46e5);
+    background: var(--accent-hover, #ff6b6b);
   }
 
   .btn-secondary {

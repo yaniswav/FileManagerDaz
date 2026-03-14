@@ -65,7 +65,10 @@ impl ImportTaskStatus {
             "done" => ImportTaskStatus::Done,
             "error" => ImportTaskStatus::Error,
             "interrupted" => ImportTaskStatus::Interrupted,
-            _ => ImportTaskStatus::Pending,
+            other => {
+                warn!("Unknown ImportTaskStatus '{}', defaulting to Pending", other);
+                ImportTaskStatus::Pending
+            }
         }
     }
 }

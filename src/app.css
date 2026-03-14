@@ -2,13 +2,17 @@
   --bg-primary: #1a1a2e;
   --bg-secondary: #16213e;
   --bg-tertiary: #0f3460;
+  --bg-hover: #1e1e3a;
   --text-primary: #eaeaea;
   --text-secondary: #a0a0a0;
   --accent: #e94560;
+  --accent-color: #e94560;
   --accent-hover: #ff6b6b;
   --success: #4ecca3;
   --warning: #ffc107;
   --error: #e94560;
+  --border-color: #333;
+  --border: #333;
   --border-radius: 8px;
 }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { open } from '@tauri-apps/plugin-shell';
   import {
@@ -24,6 +25,7 @@
   let notes = $state(product.notes ?? '');
   let saving = $state(false);
   let error = $state<string | null>(null);
+  let dialogEl: HTMLDivElement | undefined = $state();
 
   $effect(() => {
     name = product.name;
@@ -32,6 +34,40 @@
     notes = product.notes ?? '';
     error = null;
   });
+
+  // Focus trap + Escape key handling
+  onMount(() => {
+    // Focus the first input when the dialog opens
+    const firstInput = dialogEl?.querySelector<HTMLElement>('input, select, textarea, button');
+    firstInput?.focus();
+  });
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onclose?.();
+      return;
+    }
+
+    // Focus trap: cycle focus within the dialog
+    if (e.key === 'Tab' && dialogEl) {
+      const focusable = dialogEl.querySelectorAll<HTMLElement>(
+        'input, select, textarea, button:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
 
   function getContentTypeLabel(type: string): string {
     const normalized = normalizeContentType(type);
@@ -85,7 +121,9 @@
   }
 </script>
 
-<div class="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_interactive_supports_focus -->
+<div class="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="dialog-title" bind:this={dialogEl} onkeydown={handleKeydown}>
   <div class="dialog-container">
     <header class="dialog-header">
       <h2 id="dialog-title">{$t('products.details')}</h2>

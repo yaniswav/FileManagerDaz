@@ -41,6 +41,7 @@ mod anchors;
 mod batch;
 pub mod checkpoint;
 mod move_log;
+pub mod multipart;
 mod normalize;
 mod rar;
 mod recursive;
@@ -113,6 +114,13 @@ impl ArchiveFormat {
     ///
     /// Returns `None` if the extension is not recognized as an archive format.
     pub fn from_extension(path: &Path) -> Option<Self> {
+        let name = path.file_name()?.to_str()?.to_lowercase();
+
+        // Check for .partN.rar pattern first
+        if name.contains(".part") && name.ends_with(".rar") {
+            return Some(ArchiveFormat::Rar);
+        }
+
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase())
@@ -198,14 +206,30 @@ pub fn process_source(path: &Path) -> AppResult<ExtractResult> {
         return Err(AppError::NotFound(path.to_path_buf()));
     }
 
-    let result = if path.is_dir() {
-        process_directory(path)?
-    } else if path.is_file() {
-        process_archive_file(path)?
+    // If this is a secondary part of a multi-part archive,
+    // automatically resolve to the first part
+    let effective_path = if path.is_file() && multipart::is_secondary_part(path) {
+        if let Some(mp_info) = multipart::detect_multipart(path) {
+            info!(
+                "Secondary part detected, resolving to first part: {:?}",
+                mp_info.first_part
+            );
+            mp_info.first_part
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+
+    let result = if effective_path.is_dir() {
+        process_directory(&effective_path)?
+    } else if effective_path.is_file() {
+        process_archive_file(&effective_path)?
     } else {
         return Err(AppError::InvalidPath(format!(
             "Path is neither file nor directory: {}",
-            path.display()
+            effective_path.display()
         )));
     };
 
@@ -301,11 +325,37 @@ fn process_archive_file(archive_path: &Path) -> AppResult<ExtractResult> {
 
     info!("Extracting {:?} to {:?}", archive_path, extraction_dir);
 
+    // Check for multi-part archive
+    let mp_info = multipart::detect_multipart(archive_path);
+
     // Dispatch to format-specific extractor
-    let content_stats: ContentStats = match format {
-        ArchiveFormat::Zip => zip::extract_zip(archive_path, &extraction_dir)?,
-        ArchiveFormat::SevenZip => seven_zip::extract_7z(archive_path, &extraction_dir)?,
-        ArchiveFormat::Rar => rar::extract_rar(archive_path, &extraction_dir)?,
+    let content_stats: ContentStats = match (&mp_info, format) {
+        // ZIP split: reassemble then extract
+        (Some(info), ArchiveFormat::Zip)
+            if info.format == multipart::MultiPartFormat::ZipSplit =>
+        {
+            info!(
+                "Detected ZIP split archive with {} parts",
+                info.all_parts.len()
+            );
+            let reassembled = multipart::reassemble_zip_split(info, &extraction_dir)?;
+            let stats = zip::extract_zip(&reassembled, &extraction_dir)?;
+            // Clean up reassembled file
+            let _ = fs::remove_file(&reassembled);
+            stats
+        }
+        // RAR multi-part: unrar handles it natively from the first part
+        (Some(info), ArchiveFormat::Rar) => {
+            info!(
+                "Detected RAR multi-part archive with {} parts",
+                info.all_parts.len()
+            );
+            rar::extract_rar(&info.first_part, &extraction_dir)?
+        }
+        // Regular single archive
+        (_, ArchiveFormat::Zip) => zip::extract_zip(archive_path, &extraction_dir)?,
+        (_, ArchiveFormat::SevenZip) => seven_zip::extract_7z(archive_path, &extraction_dir)?,
+        (_, ArchiveFormat::Rar) => rar::extract_rar(archive_path, &extraction_dir)?,
     };
 
     let root_entries = get_root_entries(&extraction_dir)?;
