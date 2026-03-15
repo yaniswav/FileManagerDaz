@@ -18,7 +18,8 @@
 pub mod bundles;
 pub mod import_tasks;
 pub mod models;
+pub mod product_files;
 pub mod repository;
 
-pub use models::{LibraryProductInput, NewProduct, Product, UpdateProduct};
+pub use models::{Collection, DuplicateGroup, InstalledAsset, IntegrityReport, LibraryProductInput, LibraryStats, NewProduct, Product, RequiredProduct, SceneAnalysisReport, TypeCount, UninstallReport, UpdateProduct, VendorCount};
 pub use repository::Database;

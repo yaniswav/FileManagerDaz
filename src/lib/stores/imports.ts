@@ -42,6 +42,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { RecursiveExtractResult, ContentType } from '$lib/api/commands';
 import * as api from '$lib/api/import-tasks';
 import { getIntlLocale } from '$lib/i18n';
+import { notify } from '$lib/stores/notifications';
 
 // =============================================================================
 // TYPES
@@ -607,8 +608,20 @@ export async function processMultipleSources(
 
   const tasks = await importsStore.addTasks(deduplicated, targetLibrary);
 
+  let succeeded = 0;
+  let failed = 0;
+
   for (const task of tasks) {
     await processOneTask(task, onProcessed, onError);
+    // Check final status
+    const current = get(importsStore).find(t => t.id === task.id);
+    if (current?.status === 'done') succeeded++;
+    else if (current?.status === 'error') failed++;
+  }
+
+  // Batch notification (only if more than 1 task)
+  if (tasks.length > 1) {
+    notify.batchComplete(succeeded, failed);
   }
 }
 
@@ -635,12 +648,14 @@ async function processOneTask(
     console.log('[ImportsStore] Task completed:', result);
 
     await importsStore.setResult(task.id, result);
+    notify.importComplete(task.name, result.total_files, result.total_size);
     onProcessed?.(result);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error('[ImportsStore] Task error:', errorMessage);
 
     await importsStore.setError(task.id, errorMessage);
+    notify.importFailed(task.name, errorMessage);
     onError?.({ path: task.path, message: errorMessage });
   }
 }

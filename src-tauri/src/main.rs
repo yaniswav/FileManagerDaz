@@ -35,6 +35,11 @@
 use commands::import_tasks::ImportTasksState;
 use commands::products::DbState;
 use config::SETTINGS;
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::TrayIconEvent,
+    Emitter, Manager, WindowEvent,
+};
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -109,6 +114,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         // Managed state (thread-safe, accessible from commands)
         .manage(products_db_state)
         .manage(import_tasks_state)
@@ -152,9 +158,26 @@ fn main() {
             commands::products::get_product,
             commands::products::update_product,
             commands::products::delete_product,
+            commands::products::batch_update_tags,
             commands::products::search_products,
             commands::products::search_library_products,
+            commands::products::list_library_products_paginated,
+            commands::products::list_product_vendors,
+            commands::products::get_library_stats,
+            commands::products::find_duplicates,
             commands::products::scan_library_products,
+            commands::products::get_product_files,
+            commands::products::check_file_conflicts,
+            commands::products::uninstall_product,
+            commands::products::check_product_integrity,
+            commands::products::analyze_scene,
+            // --- Collection Commands ---
+            commands::collections::create_collection,
+            commands::collections::list_collections,
+            commands::collections::rename_collection,
+            commands::collections::delete_collection,
+            commands::collections::add_to_collection,
+            commands::collections::remove_from_collection,
             // --- Settings & Library Commands ---
             commands::settings::get_app_config,
             commands::settings::list_daz_libraries,
@@ -168,6 +191,13 @@ fn main() {
             commands::settings::set_dev_log_extraction_timings,
             commands::settings::set_dev_log_extraction_details,
             commands::settings::set_language,
+            commands::settings::set_minimize_to_tray,
+            commands::settings::set_auto_import_enabled,
+            commands::settings::set_auto_import_folder,
+            commands::settings::set_auto_import_mode,
+            commands::settings::set_close_action,
+            commands::settings::hide_to_tray,
+            commands::settings::quit_app,
             // --- Maintenance Commands ---
             commands::maintenance::scan_library_cmd,
             commands::maintenance::scan_all_libraries_cmd,
@@ -182,13 +212,79 @@ fn main() {
             commands::watcher::poll_watch_events,
             commands::watcher::scan_watched_folder,
             commands::watcher::get_downloads_folder,
+            commands::watcher::validate_daz_archive,
             // --- Bundle Tracking Commands ---
             commands::bundles::check_bundle_installed,
             commands::bundles::register_bundle,
             commands::bundles::list_installed_bundles,
             commands::bundles::verify_bundle_integrity,
             commands::bundles::remove_bundle_record,
+            // --- Downloader Commands ---
+            commands::downloader::parse_download_links,
+            commands::downloader::start_downloads,
         ])
+        // === System Tray Setup ===
+        .setup(|app| {
+            // Build tray context menu
+            let show = MenuItemBuilder::with_id("show", "Open FileManagerDaz").build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app).item(&show).separator().item(&quit).build()?;
+
+            // Get the tray icon created from tauri.conf.json
+            if let Some(tray) = app.tray_by_id("main-tray") {
+                tray.set_menu(Some(menu))?;
+                tray.on_menu_event(move |app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                });
+                tray.on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::DoubleClick { .. } = event {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            }
+
+            Ok(())
+        })
+        // === Window Close → Minimize to Tray or Ask ===
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let close_action = SETTINGS
+                    .read()
+                    .map(|s| s.close_action.clone())
+                    .unwrap_or_else(|_| "quit".to_string());
+
+                match close_action.as_str() {
+                    "minimize" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    "ask" => {
+                        // Prevent close and let the frontend show a dialog
+                        api.prevent_close();
+                        let _ = window.emit("close-requested", ());
+                    }
+                    _ => {
+                        // "quit" — let the window close normally
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("Failed to run Tauri application");
 }

@@ -20,9 +20,14 @@
 //! 3. **Error propagation**: All functions return `AppResult<T>` for consistent handling
 
 pub mod analyzer;
+pub mod auto_import;
 pub mod catalog;
 pub mod destination;
+pub mod downloader;
+pub mod duf_parser;
 pub mod extractor;
 pub mod maintenance;
+pub mod manifest;
+pub mod scene_analyzer;
 pub mod trash;
 pub mod watcher;

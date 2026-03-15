@@ -115,6 +115,32 @@ pub struct AppSettings {
     /// Skip corrupted archives in batch operations instead of stopping.
     #[serde(default = "default_skip_corrupted")]
     pub skip_corrupted_archives: bool,
+
+    /// Minimize to system tray instead of quitting when closing the window.
+    #[serde(default)]
+    pub minimize_to_tray: bool,
+
+    /// Close action: "ask", "minimize", or "quit".
+    /// - "ask": show a dialog asking the user
+    /// - "minimize": minimize to tray silently
+    /// - "quit": quit the app
+    #[serde(default = "default_close_action")]
+    pub close_action: String,
+
+    /// Enable auto-import: watch a folder and automatically import new archives.
+    #[serde(default)]
+    pub auto_import_enabled: bool,
+
+    /// Folder to watch for auto-import (defaults to user Downloads).
+    #[serde(default)]
+    pub auto_import_folder: Option<PathBuf>,
+
+    /// Auto-import mode: "watch_only", "confirm", or "auto".
+    /// - "watch_only": just show a toast notification
+    /// - "confirm": native OS notification + in-app toast with action button
+    /// - "auto": silently queue the archive for extraction
+    #[serde(default = "default_auto_import_mode")]
+    pub auto_import_mode: String,
 }
 
 /// Default UI language.
@@ -135,6 +161,15 @@ fn default_extraction_timeout() -> u64 {
 /// Default skip corrupted flag.
 fn default_skip_corrupted() -> bool {
     true
+}
+
+/// Default close action — ask the user.
+fn default_close_action() -> String {
+    "ask".to_string()
+}
+
+fn default_auto_import_mode() -> String {
+    "watch_only".to_string()
 }
 
 impl Default for AppSettings {
@@ -158,6 +193,11 @@ impl Default for AppSettings {
             extraction_timeout_seconds: default_extraction_timeout(),
             max_archive_size_gb: 0,
             skip_corrupted_archives: default_skip_corrupted(),
+            minimize_to_tray: false,
+            close_action: default_close_action(),
+            auto_import_enabled: false,
+            auto_import_folder: None,
+            auto_import_mode: default_auto_import_mode(),
         }
     }
 }

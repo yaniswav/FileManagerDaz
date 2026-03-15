@@ -28,9 +28,36 @@
 
 pub mod archive;
 pub mod bundles;
+pub mod collections;
+pub mod downloader;
 pub mod import_tasks;
 pub mod maintenance;
 pub mod products;
 pub mod settings;
 pub mod system;
 pub mod watcher;
+
+use serde::{Deserialize, Serialize};
+
+/// Standardized payload for background task lifecycle events.
+///
+/// Emitted via three Tauri events:
+/// - `app-task-start`    — task begins (progress = None)
+/// - `app-task-progress` — progress update (progress = Some(0.0..=1.0))
+/// - `app-task-end`      — task finished (progress = Some(1.0) on success)
+///
+/// The `status` field carries the outcome on `app-task-end`:
+/// `"success"`, `"error"`, or `"cancelled"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPayload {
+    /// Unique identifier for this task instance (e.g. UUID or descriptive key).
+    pub id: String,
+    /// Machine-readable task type: `"scan"`, `"extract"`, `"download"`, etc.
+    pub task_type: String,
+    /// Human-readable status message shown in the UI.
+    pub message: String,
+    /// Optional progress ratio in `0.0..=1.0`. `None` means indeterminate.
+    pub progress: Option<f32>,
+    /// Task status: `"running"`, `"success"`, `"error"`.
+    pub status: String,
+}

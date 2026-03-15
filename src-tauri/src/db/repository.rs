@@ -1,6 +1,6 @@
 //! Repository for CRUD operations on the database
 
-use crate::db::models::{LibraryProductInput, NewProduct, Product, UpdateProduct};
+use crate::db::models::{Collection, DuplicateGroup, LibraryProductInput, LibraryStats, NewProduct, Product, TypeCount, UpdateProduct, VendorCount};
 use crate::error::{AppError, AppResult};
 use chrono::Utc;
 use rusqlite::{params, Connection};
@@ -29,6 +29,16 @@ impl Database {
         }
 
         let conn = Connection::open(db_path)?;
+
+        // Performance & safety pragmas
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA cache_size = -8000;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
+        )?;
+
         let db = Self {
             conn: Mutex::new(conn),
         };
@@ -104,6 +114,32 @@ impl Database {
 
             // Initialize bundles table
             crate::db::bundles::init_bundles_table(conn)?;
+
+            // Initialize product files table
+            crate::db::product_files::init_product_files_table(conn)?;
+
+            // Initialize collections tables
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS collections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS collection_items (
+                    collection_id INTEGER NOT NULL,
+                    product_id INTEGER NOT NULL,
+                    added_at TEXT NOT NULL,
+                    PRIMARY KEY (collection_id, product_id),
+                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+                    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_collection_items_product ON collection_items(product_id);
+                "#,
+            )?;
 
             debug!("Database schema initialized");
             Ok(())
@@ -262,6 +298,14 @@ impl Database {
                 warn!("Skipping library_support index (columns missing after migration)");
             }
 
+            // Create index on vendor for fast filtering
+            if columns.iter().any(|c| c == "vendor") {
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor)",
+                    [],
+                )?;
+            }
+
             debug!("Database migration completed");
             Ok(())
         })
@@ -281,8 +325,8 @@ impl Database {
 
             conn.execute(
                 r#"
-                INSERT INTO products (name, path, import_task_id, source_archive, content_type, installed_at, tags, files_count, total_size)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                INSERT INTO products (name, path, import_task_id, source_archive, content_type, global_id, vendor, installed_at, tags, files_count, total_size)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 "#,
                 params![
                     product.name,
@@ -290,6 +334,8 @@ impl Database {
                     product.import_task_id,
                     product.source_archive,
                     product.content_type,
+                    product.global_id,
+                    product.vendor,
                     installed_at,
                     product.tags,
                     product.files_count,
@@ -345,6 +391,78 @@ impl Database {
                 updates.len()
             );
             Ok(rows > 0)
+        })
+    }
+
+    /// Batch update tags for multiple products in a single transaction.
+    /// mode: "add" (merge), "remove" (subtract), or "replace" (overwrite).
+    pub fn batch_update_tags(
+        &self,
+        ids: &[i64],
+        tags: &[String],
+        mode: &str,
+    ) -> AppResult<usize> {
+        if ids.is_empty() || (tags.is_empty() && mode != "replace") {
+            return Ok(0);
+        }
+        self.with_connection(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut updated = 0usize;
+
+            // Pre-clean input tags
+            let clean_tags: Vec<String> = tags
+                .iter()
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+
+            for &id in ids {
+                let new_tags = match mode {
+                    "replace" => {
+                        // Simply overwrite
+                        clean_tags.join(",")
+                    }
+                    "remove" => {
+                        let current: String = tx
+                            .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
+                            .unwrap_or_default();
+                        let remove_lower: Vec<String> = clean_tags.iter().map(|t| t.to_lowercase()).collect();
+                        current
+                            .split(',')
+                            .map(|t| t.trim().to_string())
+                            .filter(|t| !t.is_empty() && !remove_lower.contains(&t.to_lowercase()))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    }
+                    _ => {
+                        // "add" — merge without duplicates
+                        let current: String = tx
+                            .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
+                            .unwrap_or_default();
+                        let mut tag_set: Vec<String> = current
+                            .split(',')
+                            .map(|t| t.trim().to_string())
+                            .filter(|t| !t.is_empty())
+                            .collect();
+                        for tag in &clean_tags {
+                            if !tag_set.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                                tag_set.push(tag.clone());
+                            }
+                        }
+                        tag_set.join(",")
+                    }
+                };
+
+                let rows = tx.execute(
+                    "UPDATE products SET tags = ?1 WHERE id = ?2",
+                    rusqlite::params![new_tags, id],
+                )?;
+                updated += rows;
+            }
+
+            tx.commit()?;
+            info!("batch_update_tags: {} products updated (mode={}, {} tags)", updated, mode, clean_tags.len());
+            Ok(updated)
         })
     }
 
@@ -458,6 +576,383 @@ impl Database {
                 .collect::<Result<Vec<_>, _>>()?;
 
             Ok(products)
+        })
+    }
+
+    /// Lists library products with server-side pagination and filtering.
+    /// All filtering, sorting, and pagination is done in SQLite.
+    pub fn list_library_products_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+        search_query: Option<&str>,
+        library_filter: Option<&str>,
+        category_filter: Option<&str>,
+        type_filter: Option<&str>,
+        vendor_filter: Option<&str>,
+        sort_by: Option<&str>,
+        collection_id: Option<i64>,
+    ) -> AppResult<(Vec<Product>, i64)> {
+        self.with_connection(|conn| {
+            let mut conditions = vec!["origin = 'library'".to_string()];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            let mut param_idx = 1u32;
+
+            // Optional JOIN for collection filtering
+            let join_clause = if let Some(cid) = collection_id {
+                conditions.push(format!("ci.collection_id = ?{}", param_idx));
+                params.push(Box::new(cid));
+                param_idx += 1;
+                "INNER JOIN collection_items ci ON ci.product_id = products.id"
+            } else {
+                ""
+            };
+
+            if let Some(q) = search_query {
+                let trimmed = q.trim();
+                if !trimmed.is_empty() {
+                    let pattern = format!("%{}%", trimmed);
+                    conditions.push(format!(
+                        "(name LIKE ?{i} OR tags LIKE ?{i} OR content_type LIKE ?{i} OR vendor LIKE ?{i} OR categories LIKE ?{i})",
+                        i = param_idx
+                    ));
+                    params.push(Box::new(pattern));
+                    param_idx += 1;
+                }
+            }
+
+            if let Some(lib) = library_filter {
+                if !lib.is_empty() {
+                    conditions.push(format!("library_path = ?{}", param_idx));
+                    params.push(Box::new(lib.to_string()));
+                    param_idx += 1;
+                }
+            }
+
+            if let Some(cat) = category_filter {
+                if !cat.is_empty() {
+                    let pattern = format!("%{}%", cat);
+                    conditions.push(format!("categories LIKE ?{}", param_idx));
+                    params.push(Box::new(pattern));
+                    param_idx += 1;
+                }
+            }
+
+            if let Some(ct) = type_filter {
+                if !ct.is_empty() {
+                    if ct == "unknown" {
+                        conditions.push("(content_type IS NULL OR content_type = '')".to_string());
+                    } else {
+                        conditions.push(format!("content_type = ?{}", param_idx));
+                        params.push(Box::new(ct.to_string()));
+                        param_idx += 1;
+                    }
+                }
+            }
+
+            if let Some(v) = vendor_filter {
+                if !v.is_empty() {
+                    conditions.push(format!("vendor = ?{}", param_idx));
+                    params.push(Box::new(v.to_string()));
+                    param_idx += 1;
+                }
+            }
+
+            let where_clause = conditions.join(" AND ");
+
+            // Count total matching rows
+            let count_sql = format!("SELECT COUNT(*) FROM products {} WHERE {}", join_clause, where_clause);
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let total: i64 = conn.query_row(&count_sql, param_refs.as_slice(), |row| row.get(0))?;
+
+            // Determine ORDER BY
+            let order = match sort_by {
+                Some("date") => "installed_at DESC",
+                Some("size") => "total_size DESC",
+                _ => "name COLLATE NOCASE ASC",
+            };
+
+            // Fetch paginated rows
+            let select_sql = format!(
+                "SELECT {} FROM products {} WHERE {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
+                PRODUCT_SELECT_FIELDS, join_clause, where_clause, order, param_idx, param_idx + 1
+            );
+
+            params.push(Box::new(limit));
+            params.push(Box::new(offset));
+
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let mut stmt = conn.prepare(&select_sql)?;
+            let products = stmt
+                .query_map(param_refs.as_slice(), Self::map_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            debug!(
+                "Paginated library products: {} rows (total={}, offset={}, limit={})",
+                products.len(), total, offset, limit
+            );
+
+            Ok((products, total))
+        })
+    }
+
+    /// Returns a sorted list of distinct non-null vendor names for library products.
+    pub fn list_distinct_vendors(&self) -> AppResult<Vec<String>> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT vendor FROM products WHERE origin = 'library' AND vendor IS NOT NULL AND vendor != '' ORDER BY vendor COLLATE NOCASE"
+            )?;
+            let vendors = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(vendors)
+        })
+    }
+
+    /// Returns aggregate statistics for library products.
+    pub fn get_library_stats(&self) -> AppResult<LibraryStats> {
+        self.with_connection(|conn| {
+            // Total count + total size in a single query
+            let (total_products, total_size_bytes): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(total_size), 0) FROM products WHERE origin = 'library'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+            // Products by content type
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(NULLIF(content_type, ''), 'unknown') AS ct, COUNT(*) \
+                 FROM products WHERE origin = 'library' \
+                 GROUP BY ct ORDER BY COUNT(*) DESC"
+            )?;
+            let products_by_type: Vec<TypeCount> = stmt
+                .query_map([], |row| {
+                    Ok(TypeCount {
+                        content_type: row.get(0)?,
+                        count: row.get(1)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Top 10 vendors
+            let mut stmt = conn.prepare(
+                "SELECT vendor, COUNT(*) as cnt FROM products \
+                 WHERE origin = 'library' AND vendor IS NOT NULL AND vendor != '' \
+                 GROUP BY vendor ORDER BY cnt DESC LIMIT 10"
+            )?;
+            let top_vendors: Vec<VendorCount> = stmt
+                .query_map([], |row| {
+                    Ok(VendorCount {
+                        vendor: row.get(0)?,
+                        count: row.get(1)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Recent products (last 5 added)
+            let mut stmt = conn.prepare(
+                &format!(
+                    "SELECT {} FROM products WHERE origin = 'library' ORDER BY installed_at DESC LIMIT 5",
+                    PRODUCT_SELECT_FIELDS
+                )
+            )?;
+            let recent_products: Vec<Product> = stmt
+                .query_map([], Self::map_row)?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            Ok(LibraryStats {
+                total_products,
+                total_size_bytes,
+                products_by_type,
+                top_vendors,
+                recent_products,
+            })
+        })
+    }
+
+    /// Finds duplicate products (same name AND same vendor).
+    /// Returns groups of duplicates as Vec<Vec<Product>>.
+    pub fn find_duplicates(&self) -> AppResult<Vec<DuplicateGroup>> {
+        self.with_connection(|conn| {
+            // Find (name, vendor) pairs that appear more than once
+            let mut stmt = conn.prepare(
+                &format!(
+                    "SELECT {} FROM products \
+                     WHERE origin = 'library' AND (name, COALESCE(vendor, '')) IN ( \
+                       SELECT name, COALESCE(vendor, '') FROM products \
+                       WHERE origin = 'library' \
+                       GROUP BY name, COALESCE(vendor, '') \
+                       HAVING COUNT(*) > 1 \
+                     ) \
+                     ORDER BY name COLLATE NOCASE, vendor COLLATE NOCASE, installed_at",
+                    PRODUCT_SELECT_FIELDS
+                )
+            )?;
+            let all: Vec<Product> = stmt
+                .query_map([], Self::map_row)?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Group by (name_lower, vendor_lower)
+            let mut map: std::collections::BTreeMap<(String, String), Vec<Product>> =
+                std::collections::BTreeMap::new();
+            for p in all {
+                let key = (
+                    p.name.to_lowercase(),
+                    p.vendor.as_deref().unwrap_or("").to_lowercase(),
+                );
+                map.entry(key).or_default().push(p);
+            }
+
+            let groups: Vec<DuplicateGroup> = map
+                .into_values()
+                .filter(|g| g.len() > 1)
+                .map(|products| {
+                    let name = products[0].name.clone();
+                    let vendor = products[0].vendor.clone();
+                    let count = products.len() as i64;
+                    DuplicateGroup { name, vendor, count, products }
+                })
+                .collect();
+
+            Ok(groups)
+        })
+    }
+
+    // ========================================================================
+    // Collections CRUD
+    // ========================================================================
+
+    /// Creates a new collection. Returns the new collection's ID.
+    pub fn create_collection(&self, name: &str) -> AppResult<Collection> {
+        self.with_connection(|conn| {
+            let now = Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO collections (name, created_at, updated_at) VALUES (?1, ?2, ?3)",
+                params![name.trim(), now, now],
+            )?;
+            let id = conn.last_insert_rowid();
+            info!("Created collection '{}' (id={})", name, id);
+            Ok(Collection {
+                id,
+                name: name.trim().to_string(),
+                item_count: 0,
+                created_at: now.clone(),
+                updated_at: now,
+            })
+        })
+    }
+
+    /// Lists all collections with their item counts, ordered by name.
+    pub fn list_collections(&self) -> AppResult<Vec<Collection>> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT c.id, c.name, c.created_at, c.updated_at,
+                       COALESCE(cnt.n, 0) AS item_count
+                FROM collections c
+                LEFT JOIN (
+                    SELECT collection_id, COUNT(*) AS n FROM collection_items GROUP BY collection_id
+                ) cnt ON cnt.collection_id = c.id
+                ORDER BY c.name COLLATE NOCASE
+                "#,
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(Collection {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        created_at: row.get(2)?,
+                        updated_at: row.get(3)?,
+                        item_count: row.get(4)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Renames an existing collection.
+    pub fn rename_collection(&self, id: i64, new_name: &str) -> AppResult<()> {
+        self.with_connection(|conn| {
+            let now = Utc::now().to_rfc3339();
+            let rows = conn.execute(
+                "UPDATE collections SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_name.trim(), now, id],
+            )?;
+            if rows == 0 {
+                return Err(AppError::Database(format!("Collection {} not found", id)));
+            }
+            Ok(())
+        })
+    }
+
+    /// Deletes a collection (cascade deletes items).
+    pub fn delete_collection(&self, id: i64) -> AppResult<()> {
+        self.with_connection(|conn| {
+            let rows = conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+            if rows == 0 {
+                return Err(AppError::Database(format!("Collection {} not found", id)));
+            }
+            info!("Deleted collection id={}", id);
+            Ok(())
+        })
+    }
+
+    /// Adds product IDs to a collection (bulk). Silently ignores duplicates.
+    pub fn add_to_collection(&self, collection_id: i64, product_ids: &[i64]) -> AppResult<usize> {
+        if product_ids.is_empty() {
+            return Ok(0);
+        }
+        self.with_connection(|conn| {
+            let now = Utc::now().to_rfc3339();
+            let tx = conn.unchecked_transaction()?;
+            let mut added = 0usize;
+            for &pid in product_ids {
+                let r = tx.execute(
+                    "INSERT OR IGNORE INTO collection_items (collection_id, product_id, added_at) VALUES (?1, ?2, ?3)",
+                    params![collection_id, pid, now],
+                )?;
+                added += r;
+            }
+            // Bump updated_at
+            tx.execute(
+                "UPDATE collections SET updated_at = ?1 WHERE id = ?2",
+                params![now, collection_id],
+            )?;
+            tx.commit()?;
+            info!("Added {} products to collection {}", added, collection_id);
+            Ok(added)
+        })
+    }
+
+    /// Removes product IDs from a collection.
+    pub fn remove_from_collection(&self, collection_id: i64, product_ids: &[i64]) -> AppResult<usize> {
+        if product_ids.is_empty() {
+            return Ok(0);
+        }
+        self.with_connection(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut removed = 0usize;
+            for &pid in product_ids {
+                let r = tx.execute(
+                    "DELETE FROM collection_items WHERE collection_id = ?1 AND product_id = ?2",
+                    params![collection_id, pid],
+                )?;
+                removed += r;
+            }
+            let now = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE collections SET updated_at = ?1 WHERE id = ?2",
+                params![now, collection_id],
+            )?;
+            tx.commit()?;
+            info!("Removed {} products from collection {}", removed, collection_id);
+            Ok(removed)
         })
     }
 
@@ -722,5 +1217,71 @@ mod tests {
         db.add_product(&NewProduct::new("P2", "/p2")).unwrap();
 
         assert_eq!(db.count_products().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_list_library_products_paginated() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Insert library products via upsert
+        for i in 1..=10 {
+            let input = LibraryProductInput {
+                name: format!("Product {:02}", i),
+                path: format!("/lib/product{}", i),
+                library_path: "/lib".to_string(),
+                support_file: format!("product{}.dsx", i),
+                product_token: None,
+                global_id: None,
+                vendor: if i % 2 == 0 { Some("VendorA".to_string()) } else { None },
+                categories: vec!["Default/General".to_string()],
+                content_type: if i <= 5 { Some("Character".to_string()) } else { Some("Prop".to_string()) },
+                installed_at: chrono::Utc::now().to_rfc3339(),
+                thumbnail_path: None,
+                files_count: i as i64 * 10,
+                total_size: i as i64 * 1000,
+            };
+            db.upsert_library_product(&input).unwrap();
+        }
+
+        // Paginate: first page
+        let (items, total) = db
+            .list_library_products_paginated(5, 0, None, None, None, None, None, None, None)
+            .unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(items.len(), 5);
+
+        // Second page
+        let (items2, total2) = db
+            .list_library_products_paginated(5, 5, None, None, None, None, None, None, None)
+            .unwrap();
+        assert_eq!(total2, 10);
+        assert_eq!(items2.len(), 5);
+
+        // No overlap
+        let ids1: Vec<i64> = items.iter().map(|p| p.id).collect();
+        let ids2: Vec<i64> = items2.iter().map(|p| p.id).collect();
+        assert!(ids1.iter().all(|id| !ids2.contains(id)));
+
+        // Filter by content type
+        let (chars, char_total) = db
+            .list_library_products_paginated(50, 0, None, None, None, Some("Character"), None, None, None)
+            .unwrap();
+        assert_eq!(char_total, 5);
+        assert_eq!(chars.len(), 5);
+
+        // Search query
+        let (searched, search_total) = db
+            .list_library_products_paginated(50, 0, Some("Product 01"), None, None, None, None, None, None)
+            .unwrap();
+        assert_eq!(search_total, 1);
+        assert_eq!(searched.len(), 1);
+        assert_eq!(searched[0].name, "Product 01");
+
+        // Unknown type filter
+        let (unknown, unknown_total) = db
+            .list_library_products_paginated(50, 0, None, None, None, Some("unknown"), None, None, None)
+            .unwrap();
+        assert_eq!(unknown_total, 0);
+        assert_eq!(unknown.len(), 0);
     }
 }

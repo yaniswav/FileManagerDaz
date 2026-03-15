@@ -38,6 +38,16 @@ pub struct AppConfig {
     pub dev_log_extraction_details: bool,
     /// UI language ("fr" or "en")
     pub language: String,
+    /// Minimize to system tray on close
+    pub minimize_to_tray: bool,
+    /// Close action: "ask", "minimize", "quit"
+    pub close_action: String,
+    /// Auto-import enabled
+    pub auto_import_enabled: bool,
+    /// Auto-import watch folder
+    pub auto_import_folder: Option<String>,
+    /// Auto-import mode: "watch_only", "confirm", "auto"
+    pub auto_import_mode: String,
 }
 
 /// Libraries detection result
@@ -100,6 +110,14 @@ pub fn get_app_config() -> ApiResponse<AppConfig> {
                 dev_log_extraction_timings: settings.dev_log_extraction_timings,
                 dev_log_extraction_details: settings.dev_log_extraction_details,
                 language: settings.language.clone(),
+                minimize_to_tray: settings.minimize_to_tray,
+                close_action: settings.close_action.clone(),
+                auto_import_enabled: settings.auto_import_enabled,
+                auto_import_folder: settings
+                    .auto_import_folder
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                auto_import_mode: settings.auto_import_mode.clone(),
             };
 
             ApiResponse::success(config)
@@ -471,4 +489,130 @@ pub fn set_language(language: String) -> ApiResponse<String> {
             ApiResponse::error(AppError::Config(format!("Failed to set language: {}", e)))
         }
     }
+}
+
+// ============================================================================
+// System Tray & Auto-Import Settings
+// ============================================================================
+
+#[tauri::command]
+pub fn set_minimize_to_tray(enabled: bool) -> ApiResponse<bool> {
+    info!("set_minimize_to_tray: {}", enabled);
+    match SETTINGS.write() {
+        Ok(mut settings) => {
+            settings.minimize_to_tray = enabled;
+            if let Err(e) = settings.save() {
+                warn!("Failed to save settings: {}", e);
+            }
+            ApiResponse::success(enabled)
+        }
+        Err(e) => {
+            error!("Failed to write settings: {}", e);
+            ApiResponse::error(AppError::Config(format!("Failed to set minimize_to_tray: {}", e)))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_auto_import_enabled(enabled: bool) -> ApiResponse<bool> {
+    info!("set_auto_import_enabled: {}", enabled);
+    match SETTINGS.write() {
+        Ok(mut settings) => {
+            settings.auto_import_enabled = enabled;
+            if let Err(e) = settings.save() {
+                warn!("Failed to save settings: {}", e);
+            }
+            ApiResponse::success(enabled)
+        }
+        Err(e) => {
+            error!("Failed to write settings: {}", e);
+            ApiResponse::error(AppError::Config(format!("Failed to set auto_import: {}", e)))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_auto_import_folder(path: Option<String>) -> ApiResponse<Option<String>> {
+    info!("set_auto_import_folder: {:?}", path);
+    match SETTINGS.write() {
+        Ok(mut settings) => {
+            settings.auto_import_folder = path.as_ref().map(std::path::PathBuf::from);
+            if let Err(e) = settings.save() {
+                warn!("Failed to save settings: {}", e);
+            }
+            ApiResponse::success(path)
+        }
+        Err(e) => {
+            error!("Failed to write settings: {}", e);
+            ApiResponse::error(AppError::Config(format!("Failed to set auto_import_folder: {}", e)))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_auto_import_mode(mode: String) -> ApiResponse<String> {
+    info!("set_auto_import_mode: {}", mode);
+    let valid = matches!(mode.as_str(), "watch_only" | "confirm" | "auto");
+    if !valid {
+        return ApiResponse::error(AppError::Config(format!(
+            "Invalid auto_import_mode: {}",
+            mode
+        )));
+    }
+    match SETTINGS.write() {
+        Ok(mut settings) => {
+            settings.auto_import_mode = mode.clone();
+            if let Err(e) = settings.save() {
+                warn!("Failed to save settings: {}", e);
+            }
+            ApiResponse::success(mode)
+        }
+        Err(e) => {
+            error!("Failed to write settings: {}", e);
+            ApiResponse::error(AppError::Config(format!(
+                "Failed to set auto_import_mode: {}",
+                e
+            )))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_close_action(action: String) -> ApiResponse<String> {
+    info!("set_close_action: {}", action);
+    let valid = matches!(action.as_str(), "ask" | "minimize" | "quit");
+    if !valid {
+        return ApiResponse::error(AppError::Config(format!("Invalid close action: {}", action)));
+    }
+    match SETTINGS.write() {
+        Ok(mut settings) => {
+            // Keep minimize_to_tray in sync for backward compatibility
+            settings.minimize_to_tray = action == "minimize";
+            settings.close_action = action.clone();
+            if let Err(e) = settings.save() {
+                warn!("Failed to save settings: {}", e);
+            }
+            ApiResponse::success(action)
+        }
+        Err(e) => {
+            error!("Failed to write settings: {}", e);
+            ApiResponse::error(AppError::Config(format!("Failed to set close_action: {}", e)))
+        }
+    }
+}
+
+/// Hide the window (minimize to tray). Called from the close dialog.
+#[tauri::command]
+pub fn hide_to_tray(window: tauri::Window) -> ApiResponse<bool> {
+    info!("hide_to_tray");
+    let _ = window.hide();
+    ApiResponse::success(true)
+}
+
+/// Quit the application. Called from the close dialog.
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) -> ApiResponse<bool> {
+    info!("quit_app");
+    app.exit(0);
+    ApiResponse::success(true)
 }

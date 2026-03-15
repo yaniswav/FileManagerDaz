@@ -1,5 +1,6 @@
 //! Tauri commands for folder watching
 
+use crate::core::auto_import::{validate_archive, ArchiveValidation};
 use crate::core::watcher::{WatchEvent, WatchEventType, WatcherState};
 use crate::error::ApiResponse;
 use serde::Serialize;
@@ -137,4 +138,12 @@ pub async fn get_downloads_folder() -> Result<ApiResponse<Option<String>>, Strin
         .map(|p| p.to_string_lossy().to_string());
 
     Ok(ApiResponse::success(path))
+}
+
+/// Validates whether a file is a DAZ archive
+#[tauri::command]
+pub async fn validate_daz_archive(path: String) -> Result<ApiResponse<ArchiveValidation>, String> {
+    info!("validate_daz_archive: {}", path);
+    let result = validate_archive(Path::new(&path));
+    Ok(ApiResponse::success(result))
 }

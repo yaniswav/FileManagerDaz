@@ -11,6 +11,7 @@ export default {
     import: 'Import',
     products: 'Products',
     tools: 'Tools',
+    downloads: 'Downloads',
     settings: 'Settings',
   },
 
@@ -96,6 +97,8 @@ export default {
     sortSize: 'Size',
     noProducts: 'No products found',
     noResults: 'No results',
+    loadMore: 'Loading more...',
+    showingCount: '{count} of {total} products',
     rebuildFromHistory: 'Rebuild from import history',
     rebuilding: 'Rebuilding...',
     loading: 'Loading products...',
@@ -120,6 +123,8 @@ export default {
     delete: 'Delete',
     openFolder: 'Open folder',
     details: 'Details',
+    editProduct: 'Edit Product',
+    metadata: 'Metadata',
     installDate: 'Installation date',
     filesCount: 'Number of files',
     totalSize: 'Total size',
@@ -231,6 +236,14 @@ export default {
       cleanup: 'Cleanup',
       noIssues: 'No issues detected!',
     },
+    duplicates: {
+      title: 'Duplicate Detector',
+      description: 'Find and remove duplicate products in your library.',
+    },
+    analyzer: {
+      title: 'Scene Analyzer',
+      description: 'Analyze a .duf scene to find missing assets and required products.',
+    },
   },
 
   // Settings
@@ -309,6 +322,30 @@ export default {
       tempDir: 'Temp folder',
       thumbnails: 'Thumbnails',
     },
+    systemTray: {
+      title: 'System Tray & Background',
+      minimizeToTray: 'Minimize to system tray on close',
+      minimizeToTrayHint: 'When you close the window, the app stays in the background (system tray). Right-click the tray icon to quit.',
+      closeAction: 'When closing the window',
+      closeActionAsk: 'Ask me every time',
+      closeActionMinimize: 'Minimize to tray',
+      closeActionQuit: 'Quit the application',
+    },
+    autoImport: {
+      enabled: 'Enable auto-import',
+      enabledHint: 'Automatically detect new DAZ archives in a watched folder and import them.',
+      folder: 'Watch folder',
+      noFolder: 'No folder selected (defaults to Downloads)',
+      pickFolder: 'Choose folder',
+      modeLabel: 'Behavior when archive detected',
+      modeHint: 'Choose what happens when a new archive is detected in the watched folder.',
+      modeWatchOnly: 'Watch Only',
+      modeWatchOnlyHint: 'Just show a notification',
+      modeConfirm: 'Confirm',
+      modeConfirmHint: 'Ask before extracting',
+      modeAuto: 'Auto-Extract',
+      modeAutoHint: 'Extract automatically',
+    },
     developer: {
       title: 'Developer options',
     },
@@ -316,6 +353,12 @@ export default {
     saved: 'Settings saved',
     cancel: 'Cancel',
     reset: 'Reset',
+  },
+
+  // Auto-import confirm banner (page-level)
+  autoImport: {
+    pendingTitle: 'Archives pending confirmation',
+    extract: 'Extract',
   },
 
   // Status bar
@@ -378,6 +421,8 @@ export default {
     browse: 'Browse...',
     errors: 'Errors',
     andMore: '... and {count} more',
+    copy: 'Copy',
+    copied: 'Copied!',
   },
 
   errors: {
@@ -402,5 +447,38 @@ export default {
     deleteProduct: 'Are you sure you want to delete this product?',
     reset: 'Are you sure you want to reset settings?',
     cancel: 'Are you sure you want to cancel?',
+  },
+
+  downloads: {
+    title: 'Bulk Download',
+    hint: 'Paste Google Drive or MediaFire links below (one per line or mixed text)',
+    placeholder: 'https://drive.google.com/file/d/...\nhttps://www.mediafire.com/file/...',
+    parseButton: 'Detect Links',
+    parsing: 'Analyzing...',
+    detected: '{count} link(s) detected',
+    destDir: 'Destination',
+    browse: 'Browse...',
+    workers: 'Parallel DL',
+    startButton: 'Download {count} file(s)',
+    inProgress: 'Downloading in progress...',
+    statusPending: 'Pending...',
+    summaryTitle: 'Download Complete',
+    success: 'Success',
+    failed: 'Failed',
+    skipped: 'Skipped',
+    totalSize: 'Total Size',
+    newBatch: 'New Batch',
+    error: 'Error:',
+  },
+
+  closeDialog: {
+    title: 'Close FileManagerDaz?',
+    message: 'What would you like to do?',
+    minimize: 'Minimize to tray',
+    minimizeHint: 'Keep running in the background',
+    quit: 'Quit',
+    quitHint: 'Close the application',
+    remember: 'Remember my choice',
+    cancel: 'Cancel',
   },
 } as const;

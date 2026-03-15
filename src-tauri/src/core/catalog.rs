@@ -51,7 +51,13 @@ pub fn list_support_metadata_files(library_path: &Path) -> AppResult<Vec<PathBuf
 
     let mut files = Vec::new();
     for entry in WalkDir::new(&support_dir).min_depth(1).max_depth(6) {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Skipping unreadable entry in {}: {}", support_dir.display(), e);
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -151,11 +157,12 @@ pub fn parse_daz_metadata_file(path: &Path) -> AppResult<Vec<CatalogProduct>> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(AppError::Other(format!(
-                    "Failed to parse metadata {}: {}",
+                tracing::warn!(
+                    "XML parse error in metadata {}: {} — skipping remainder",
                     path.display(),
                     e
-                )));
+                );
+                break;
             }
             _ => {}
         }

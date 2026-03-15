@@ -117,6 +117,16 @@ export interface AppConfig {
   devLogExtractionDetails: boolean;
   /** UI language ("fr" or "en"). */
   language: string;
+  /** Minimize to system tray on close. */
+  minimizeToTray: boolean;
+  /** Close action: "ask", "minimize", "quit". */
+  closeAction: string;
+  /** Auto-import enabled. */
+  autoImportEnabled: boolean;
+  /** Auto-import watch folder. */
+  autoImportFolder: string | null;
+  /** Auto-import mode: "watch_only", "confirm", "auto". */
+  autoImportMode: string;
 }
 
 /**
@@ -608,6 +618,23 @@ export async function deleteProduct(id: number): Promise<boolean> {
 }
 
 /**
+ * Batch add/remove/replace tags on multiple products.
+ * @param mode - "add" (merge, default), "remove" (subtract), or "replace" (overwrite).
+ */
+export async function batchUpdateTags(
+  ids: number[],
+  tags: string[],
+  mode: 'add' | 'remove' | 'replace' = 'add',
+): Promise<number> {
+  const response = await invoke<ApiResponse<number>>('batch_update_tags', {
+    ids,
+    tags,
+    mode,
+  });
+  return unwrap(response);
+}
+
+/**
  * Searches products by name or tags.
  * @param query - Search query string.
  * @returns Matching products.
@@ -628,15 +655,122 @@ export async function searchLibraryProducts(query: string): Promise<Product[]> {
 }
 
 /**
- * Scans DAZ libraries and rebuilds the product catalog.
- * @param libraryPath - Optional library path to scan.
- * @returns Number of products indexed.
+ * Paginated response for library products.
  */
-export async function scanLibraryProducts(libraryPath?: string): Promise<number> {
+export interface PaginatedProducts {
+  items: Product[];
+  total: number;
+}
+
+/**
+ * Filters for the paginated library products query.
+ */
+export interface ProductFilters {
+  limit?: number;
+  offset?: number;
+  searchQuery?: string;
+  libraryFilter?: string;
+  categoryFilter?: string;
+  typeFilter?: string;
+  vendorFilter?: string;
+  sortBy?: 'name' | 'date' | 'size';
+  collectionId?: number;
+}
+
+/**
+ * Lists library products with server-side pagination and filtering.
+ * @param filters - Pagination and filter parameters.
+ * @returns Paginated products and total count.
+ */
+export async function listLibraryProductsPaginated(
+  filters: ProductFilters = {},
+): Promise<PaginatedProducts> {
+  const response = await invoke<ApiResponse<PaginatedProducts>>(
+    'list_library_products_paginated',
+    {
+      limit: filters.limit ?? 50,
+      offset: filters.offset ?? 0,
+      searchQuery: filters.searchQuery || null,
+      libraryFilter: filters.libraryFilter || null,
+      categoryFilter: filters.categoryFilter || null,
+      typeFilter: filters.typeFilter || null,
+      vendorFilter: filters.vendorFilter || null,
+      sortBy: filters.sortBy || null,
+      collectionId: filters.collectionId ?? null,
+    },
+  );
+  return unwrap(response);
+}
+
+/**
+ * Returns a sorted list of distinct vendor names.
+ */
+export async function listProductVendors(): Promise<string[]> {
+  const response = await invoke<ApiResponse<string[]>>('list_product_vendors');
+  return unwrap(response);
+}
+
+// ── Library Stats ──────────────────────────────────────────────────────
+
+export interface TypeCount {
+  contentType: string;
+  count: number;
+}
+
+export interface VendorCount {
+  vendor: string;
+  count: number;
+}
+
+export interface LibraryStats {
+  totalProducts: number;
+  totalSizeBytes: number;
+  productsByType: TypeCount[];
+  topVendors: VendorCount[];
+  recentProducts: Product[];
+}
+
+/**
+ * Returns aggregate statistics for the library dashboard.
+ */
+export async function getLibraryStats(): Promise<LibraryStats> {
+  const response = await invoke<ApiResponse<LibraryStats>>('get_library_stats');
+  return unwrap(response);
+}
+
+// ── Duplicate Detection ────────────────────────────────────────────────
+
+export interface DuplicateGroup {
+  name: string;
+  vendor: string | null;
+  count: number;
+  products: Product[];
+}
+
+/**
+ * Finds duplicate products (same name + same vendor).
+ */
+export async function findDuplicates(): Promise<DuplicateGroup[]> {
+  const response = await invoke<ApiResponse<DuplicateGroup[]>>('find_duplicates');
+  return unwrap(response);
+}
+
+/**
+ * Scans DAZ libraries and rebuilds the product catalog.
+ * Returns immediately — the scan runs in the background.
+ * Listen for 'scan-complete' or 'scan-error' events for results.
+ * @param libraryPath - Optional library path to scan.
+ * @param resourceProfile - Thread usage: "low", "normal" (default), or "max".
+ */
+export async function scanLibraryProducts(
+  libraryPath?: string,
+  resourceProfile?: 'low' | 'normal' | 'max',
+): Promise<void> {
   const response = await invoke<ApiResponse<number>>('scan_library_products', {
     libraryPath: libraryPath ?? null,
+    resourceProfile: resourceProfile ?? null,
   });
-  return unwrap(response);
+  unwrap(response);
 }
 
 // =============================================================================
@@ -759,6 +893,88 @@ export async function setDevLogExtractionDetails(enabled: boolean): Promise<bool
  */
 export async function setLanguage(language: string): Promise<string> {
   const response = await invoke<ApiResponse<string>>('set_language', { language });
+  return unwrap(response);
+}
+
+// ============================================================================
+// System Tray & Auto-Import Settings
+// ============================================================================
+
+/**
+ * Sets the minimize-to-tray behavior.
+ */
+export async function setMinimizeToTray(enabled: boolean): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_minimize_to_tray', { enabled });
+  return unwrap(response);
+}
+
+/**
+ * Enables or disables auto-import.
+ */
+export async function setAutoImportEnabled(enabled: boolean): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('set_auto_import_enabled', { enabled });
+  return unwrap(response);
+}
+
+/**
+ * Sets the auto-import watch folder.
+ */
+export async function setAutoImportFolder(path: string | null): Promise<string | null> {
+  const response = await invoke<ApiResponse<string | null>>('set_auto_import_folder', { path });
+  return unwrap(response);
+}
+
+/**
+ * Sets the auto-import mode.
+ * @param mode - "watch_only", "confirm", or "auto"
+ */
+export async function setAutoImportMode(mode: string): Promise<string> {
+  const response = await invoke<ApiResponse<string>>('set_auto_import_mode', { mode });
+  return unwrap(response);
+}
+
+/**
+ * Sets the close action preference.
+ * @param action - "ask", "minimize", or "quit"
+ */
+export async function setCloseAction(action: string): Promise<string> {
+  const response = await invoke<ApiResponse<string>>('set_close_action', { action });
+  return unwrap(response);
+}
+
+/**
+ * Hide the window to the system tray.
+ */
+export async function hideToTray(): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('hide_to_tray');
+  return unwrap(response);
+}
+
+/**
+ * Quit the application.
+ */
+export async function quitApp(): Promise<boolean> {
+  const response = await invoke<ApiResponse<boolean>>('quit_app');
+  return unwrap(response);
+}
+
+/**
+ * Archive validation result.
+ */
+export interface ArchiveValidation {
+  path: string;
+  fileName: string;
+  isDazArchive: boolean;
+  format: string | null;
+  reason: string;
+  sizeBytes: number;
+}
+
+/**
+ * Validates whether a file is a DAZ archive.
+ */
+export async function validateDazArchive(path: string): Promise<ArchiveValidation> {
+  const response = await invoke<ApiResponse<ArchiveValidation>>('validate_daz_archive', { path });
   return unwrap(response);
 }
 
@@ -1120,4 +1336,207 @@ export function formatDate(isoDate: string): string {
  */
 export function parseTags(tags: string): string[] {
   return tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
+}
+
+// =============================================================================
+// COLLECTIONS
+// =============================================================================
+
+export interface Collection {
+  id: number;
+  name: string;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function createCollection(name: string): Promise<Collection> {
+  const response = await invoke<ApiResponse<Collection>>('create_collection', { name });
+  return unwrap(response);
+}
+
+export async function listCollections(): Promise<Collection[]> {
+  const response = await invoke<ApiResponse<Collection[]>>('list_collections');
+  return unwrap(response);
+}
+
+export async function renameCollection(id: number, name: string): Promise<void> {
+  const response = await invoke<ApiResponse<null>>('rename_collection', { id, name });
+  unwrap(response);
+}
+
+export async function deleteCollection(id: number): Promise<void> {
+  const response = await invoke<ApiResponse<null>>('delete_collection', { id });
+  unwrap(response);
+}
+
+export async function addToCollection(collectionId: number, productIds: number[]): Promise<number> {
+  const response = await invoke<ApiResponse<number>>('add_to_collection', { collectionId, productIds });
+  return unwrap(response);
+}
+
+export async function removeFromCollection(collectionId: number, productIds: number[]): Promise<number> {
+  const response = await invoke<ApiResponse<number>>('remove_from_collection', { collectionId, productIds });
+  return unwrap(response);
+}
+
+// =============================================================================
+// DOWNLOADER TYPES
+// =============================================================================
+
+/** Supported download services */
+export type DownloadService = 'googledrive' | 'mediafire';
+
+/** A parsed download link */
+export interface DownloadLink {
+  url: string;
+  service: DownloadService;
+  gdriveId: string | null;
+}
+
+/** Status of a single download */
+export type DownloadStatus =
+  | 'Pending'
+  | { Downloading: { progressBytes: number; totalBytes: number | null } }
+  | { Completed: { fileName: string; fileSize: number; durationSecs: number } }
+  | { Failed: { error: string } }
+  | { Skipped: { reason: string } };
+
+/** Result of a single download */
+export interface DownloadResult {
+  index: number;
+  url: string;
+  service: DownloadService;
+  status: DownloadStatus;
+}
+
+/** Progress event emitted during downloads */
+export interface DownloadProgressEvent {
+  index: number;
+  total: number;
+  fileName: string | null;
+  status: DownloadStatus;
+}
+
+/** Summary of a batch download */
+export interface DownloadSummary {
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  totalBytes: number;
+  totalDurationSecs: number;
+  results: DownloadResult[];
+}
+
+/** Options for a batch download */
+export interface DownloadOptions {
+  destDir: string;
+  workers?: number;
+  retries?: number;
+  timeoutSecs?: number;
+}
+
+// =============================================================================
+// DOWNLOADER COMMANDS
+// =============================================================================
+
+/**
+ * Parse URLs from pasted text to detect download links.
+ * @param text - Raw text containing URLs
+ * @returns List of detected download links
+ */
+export async function parseDownloadLinks(text: string): Promise<DownloadLink[]> {
+  const response = await invoke<ApiResponse<DownloadLink[]>>('parse_download_links', { text });
+  return unwrap(response);
+}
+
+/**
+ * Start downloading all provided links.
+ * Emits `download-progress` events for real-time tracking.
+ * @param links - Parsed download links
+ * @param options - Download options (dest dir, workers, retries)
+ * @returns Download summary
+ */
+export async function startDownloads(links: DownloadLink[], options: DownloadOptions): Promise<DownloadSummary> {
+  const response = await invoke<ApiResponse<DownloadSummary>>('start_downloads', { links, options });
+  return unwrap(response);
+}
+
+// =============================================================================
+// MAINTENANCE (Uninstall & Integrity)
+// =============================================================================
+
+export interface UninstallReport {
+  productId: number;
+  productName: string;
+  filesFound: number;
+  filesDeleted: number;
+  filesMissing: number;
+  bytesFreed: number;
+  errors: string[];
+  dryRun: boolean;
+}
+
+export interface IntegrityReport {
+  productId: number;
+  totalFiles: number;
+  filesPresent: number;
+  filesMissing: number;
+  integrityPct: number;
+  missingPaths: string[];
+}
+
+/**
+ * Uninstalls a product: deletes files from disk + DB.
+ * With dryRun = true, only previews what would be deleted.
+ */
+export async function uninstallProduct(id: number, dryRun: boolean): Promise<UninstallReport> {
+  const response = await invoke<ApiResponse<UninstallReport>>('uninstall_product', { id, dryRun });
+  return unwrap(response);
+}
+
+/**
+ * Checks integrity of a product's files on disk.
+ */
+export async function checkProductIntegrity(id: number): Promise<IntegrityReport> {
+  const response = await invoke<ApiResponse<IntegrityReport>>('check_product_integrity', { id });
+  return unwrap(response);
+}
+
+// =============================================================================
+// SCENE ANALYZER
+// =============================================================================
+
+export interface InstalledAsset {
+  relativePath: string;
+  productId: number;
+  productName: string;
+}
+
+export interface RequiredProduct {
+  productId: number;
+  productName: string;
+  filesUsed: number;
+}
+
+export interface SceneAnalysisReport {
+  sceneName: string;
+  totalDependencies: number;
+  installedCount: number;
+  missingCount: number;
+  completionPct: number;
+  installedAssets: InstalledAsset[];
+  untrackedAssets: string[];
+  missingAssets: string[];
+  requiredProducts: RequiredProduct[];
+}
+
+/**
+ * Analyzes a .duf scene file and cross-references its dependencies
+ * against installed products.
+ */
+export async function analyzeScene(filePath: string): Promise<SceneAnalysisReport> {
+  const response = await invoke<ApiResponse<SceneAnalysisReport>>('analyze_scene', { filePath });
+  return unwrap(response);
 }

@@ -1,17 +1,25 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
   import Status from '$lib/components/Status.svelte';
   import DropZone from '$lib/components/DropZone.svelte';
   import ProductsList from '$lib/components/ProductsList.svelte';
   import Settings from '$lib/components/Settings.svelte';
   import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
-  import { formatFileSize, getAppConfig, type RecursiveExtractResult } from '$lib/api/commands';
-  import { completedTasks, type ImportTask } from '$lib/stores/imports';
+  import Downloads from '$lib/components/Downloads.svelte';
+  import Toast from '$lib/components/Toast.svelte';
+  import CloseDialog from '$lib/components/CloseDialog.svelte';
+  import StatusBar from '$lib/components/layout/StatusBar.svelte';
+  import { initTaskListeners, destroyTaskListeners } from '$lib/stores/tasks.svelte';
+  import { formatFileSize, getAppConfig, pollWatchEvents, startWatching, getDownloadsFolder, scanWatchedFolder, type RecursiveExtractResult, type WatchEvent } from '$lib/api/commands';
+  import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
+  import { notify } from '$lib/stores/notifications';
   import { t, initLocale } from '$lib/i18n';
 
-  let activeTab: 'extract' | 'products' | 'tools' | 'settings' = $state('extract');
+  let activeTab: 'extract' | 'products' | 'tools' | 'downloads' | 'settings' = $state('extract');
   let productsRefreshKey = $state(0);
+  let showCloseDialog = $state(false);
   
   // Reactive state for completed tasks from store
   let recentTasks: ImportTask[] = $state([]);
@@ -19,15 +27,107 @@
     recentTasks = tasks.slice(0, 5); // Last 5
   });
 
+  let unlistenClose: (() => void) | null = null;
+  let watcherPollInterval: ReturnType<typeof setInterval> | null = null;
+  /** Archives pending user confirmation (for "confirm" mode) */
+  let pendingConfirmArchives: { path: string; fileName: string }[] = $state([]);
+
+  /** Handle a detected watcher event according to the configured mode */
+  async function handleWatcherEvent(event: WatchEvent, mode: string) {
+    if (event.eventType !== 'created') return;
+
+    const fileName = event.fileName || event.path.split(/[\\/]/).pop() || 'archive';
+
+    if (mode === 'auto') {
+      // Auto-extract: silently inject into the import pipeline
+      notify.info('Auto-Import', `Extracting: ${fileName}`);
+      processMultipleSources(
+        [event.path],
+        undefined,
+        (result) => { productsRefreshKey++; },
+        (err) => { console.error('[AutoImport] Error:', err); }
+      );
+    } else if (mode === 'confirm') {
+      // Show in-app toast + native notification, wait for user action
+      notify.success('Auto-Import', `New archive: ${fileName} — click Extract tab to confirm`);
+      pendingConfirmArchives = [...pendingConfirmArchives, { path: event.path, fileName }];
+    } else {
+      // watch_only: just notify
+      notify.success('Auto-Import', `New archive detected: ${fileName}`);
+    }
+  }
+
+  function confirmExtract(index: number) {
+    const archive = pendingConfirmArchives[index];
+    if (!archive) return;
+    pendingConfirmArchives = pendingConfirmArchives.filter((_, i) => i !== index);
+    notify.info('Auto-Import', `Extracting: ${archive.fileName}`);
+    processMultipleSources(
+      [archive.path],
+      undefined,
+      () => { productsRefreshKey++; },
+      (err) => { console.error('[AutoImport] Error:', err); }
+    );
+  }
+
+  function dismissArchive(index: number) {
+    pendingConfirmArchives = pendingConfirmArchives.filter((_, i) => i !== index);
+  }
+
   // Initialize locale from settings on mount
   onMount(async () => {
+    // Start global task event listeners
+    await initTaskListeners();
+
     try {
       const config = await getAppConfig();
       initLocale(config.language);
+
+      // Start watcher if auto-import is enabled
+      if (config.autoImportEnabled) {
+        const folder = config.autoImportFolder || (await getDownloadsFolder()) || '';
+        if (folder) {
+          try {
+            await startWatching(folder);
+            const existing = await scanWatchedFolder();
+            if (existing.length > 0) {
+              notify.success('Auto-Import', `${existing.length} archive(s) detected in watched folder`);
+            }
+          } catch (e) {
+            console.error('Failed to start watcher:', e);
+          }
+        }
+      }
+
+      // Start polling for watcher events (mode-aware)
+      watcherPollInterval = setInterval(async () => {
+        try {
+          const events: WatchEvent[] = await pollWatchEvents();
+          // Re-read mode in case user changed it in settings
+          const currentConfig = await getAppConfig();
+          const currentMode = currentConfig.autoImportMode || 'watch_only';
+          for (const event of events) {
+            await handleWatcherEvent(event, currentMode);
+          }
+        } catch {
+          // Watcher may not be active, ignore
+        }
+      }, 3000);
     } catch (e) {
       console.error('Failed to load config for i18n:', e);
       initLocale('fr');
     }
+
+    // Listen for close-requested event from backend (when close_action = "ask")
+    unlistenClose = await listen('close-requested', () => {
+      showCloseDialog = true;
+    });
+  });
+
+  onDestroy(() => {
+    destroyTaskListeners();
+    unlistenClose?.();
+    if (watcherPollInterval) clearInterval(watcherPollInterval);
   });
 
   async function handleProcessed(result: RecursiveExtractResult) {
@@ -68,6 +168,12 @@
       {$t('tabs.tools')}
     </button>
     <button
+      class:active={activeTab === 'downloads'}
+      onclick={() => (activeTab = 'downloads')}
+    >
+      {$t('tabs.downloads')}
+    </button>
+    <button
       class:active={activeTab === 'settings'}
       onclick={() => (activeTab = 'settings')}
     >
@@ -76,12 +182,26 @@
   </nav>
 
   <section class="content">
-    {#if activeTab !== 'settings'}
-      <Status />
-    {/if}
-
     {#if activeTab === 'extract'}
+      <Status />
       <DropZone onprocessed={handleProcessed} onerror={handleError} />
+
+      {#if pendingConfirmArchives.length > 0}
+        <div class="pending-archives">
+          <h3>📦 {$t('autoImport.pendingTitle')}</h3>
+          {#each pendingConfirmArchives as archive, i}
+            <div class="pending-item">
+              <span class="pending-name" title={archive.path}>{archive.fileName}</span>
+              <button class="btn-confirm" onclick={() => confirmExtract(i)}>
+                ✅ {$t('autoImport.extract')}
+              </button>
+              <button class="btn-dismiss" onclick={() => dismissArchive(i)}>
+                ✕
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
 
       {#if recentTasks.length > 0}
         <div class="recent-results">
@@ -117,8 +237,17 @@
     {:else if activeTab === 'settings'}
       <Settings />
     {/if}
+
+    <!-- Downloads is always mounted, hidden via CSS to preserve download state -->
+    <div class="tab-panel" class:tab-hidden={activeTab !== 'downloads'}>
+      <Downloads />
+    </div>
   </section>
 </main>
+
+<Toast />
+<CloseDialog bind:visible={showCloseDialog} />
+<StatusBar />
 
 <style>
   main {
@@ -126,6 +255,7 @@
     display: flex;
     flex-direction: column;
     padding: 1.5rem;
+    padding-bottom: calc(1.5rem + 28px);
     overflow: hidden;
   }
 
@@ -175,7 +305,7 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    max-width: 900px;
+    max-width: 1400px;
     margin: 0 auto;
     width: 100%;
     overflow-y: auto;
@@ -239,5 +369,80 @@
     color: var(--text-secondary);
     font-family: monospace;
     opacity: 0.8;
+  }
+
+  .tab-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    flex: 1;
+  }
+
+  .tab-hidden {
+    display: none !important;
+  }
+
+  .pending-archives {
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .pending-archives h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    color: var(--accent);
+  }
+
+  .pending-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .pending-item:last-child {
+    border-bottom: none;
+  }
+
+  .pending-name {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .btn-confirm {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.3rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .btn-confirm:hover {
+    filter: brightness(1.1);
+  }
+
+  .btn-dismiss {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .btn-dismiss:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
   }
 </style>

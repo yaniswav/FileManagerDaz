@@ -11,6 +11,7 @@ export default {
     import: 'Import',
     products: 'Produits',
     tools: 'Outils',
+    downloads: 'Téléchargements',
     settings: 'Paramètres',
   },
 
@@ -96,6 +97,8 @@ export default {
     sortSize: 'Taille',
     noProducts: 'Aucun produit trouvé',
     noResults: 'Aucun résultat',
+    loadMore: 'Chargement en cours...',
+    showingCount: '{count} sur {total} produits',
     rebuildFromHistory: "Reconstruire depuis l'historique d'import",
     rebuilding: 'Reconstruction...',
     loading: 'Chargement des produits...',
@@ -120,6 +123,8 @@ export default {
     delete: 'Supprimer',
     openFolder: 'Ouvrir le dossier',
     details: 'Détails',
+    editProduct: 'Modifier le produit',
+    metadata: 'Métadonnées',
     installDate: "Date d'installation",
     filesCount: 'Nombre de fichiers',
     totalSize: 'Taille totale',
@@ -232,6 +237,14 @@ export default {
       cleanup: 'Nettoyage',
       noIssues: 'Aucun problème détecté !',
     },
+    duplicates: {
+      title: 'Détecteur de doublons',
+      description: 'Trouvez et supprimez les produits en double dans votre bibliothèque.',
+    },
+    analyzer: {
+      title: 'Analyseur de Scène',
+      description: 'Analysez un fichier .duf pour trouver les assets manquants et les produits requis.',
+    },
   },
 
   // Settings
@@ -312,6 +325,30 @@ export default {
       tempDir: 'Répertoire temporaire',
       thumbnails: 'Vignettes',
     },
+    systemTray: {
+      title: 'Barre système & Arrière-plan',
+      minimizeToTray: 'Réduire dans la barre système à la fermeture',
+      minimizeToTrayHint: 'Quand vous fermez la fenêtre, l\'app reste en arrière-plan (barre système). Clic droit sur l\'icône pour quitter.',
+      closeAction: 'À la fermeture de la fenêtre',
+      closeActionAsk: 'Me demander à chaque fois',
+      closeActionMinimize: 'Réduire dans la barre système',
+      closeActionQuit: 'Quitter l\'application',
+    },
+    autoImport: {
+      enabled: 'Activer l\'auto-import',
+      enabledHint: 'Détecte automatiquement les nouvelles archives DAZ dans un dossier surveillé et les importe.',
+      folder: 'Dossier surveillé',
+      noFolder: 'Aucun dossier sélectionné (par défaut : Téléchargements)',
+      pickFolder: 'Choisir un dossier',
+      modeLabel: 'Comportement à la détection',
+      modeHint: 'Choisissez ce qui se passe quand une nouvelle archive est détectée dans le dossier surveillé.',
+      modeWatchOnly: 'Surveillance',
+      modeWatchOnlyHint: 'Notification simple',
+      modeConfirm: 'Confirmation',
+      modeConfirmHint: 'Demander avant d\'extraire',
+      modeAuto: 'Auto-extraction',
+      modeAutoHint: 'Extraire automatiquement',
+    },
     developer: {
       title: 'Options développeur',
     },
@@ -319,6 +356,12 @@ export default {
     saved: 'Paramètres sauvegardés',
     cancel: 'Annuler',
     reset: 'Réinitialiser',
+  },
+
+  // Auto-import confirm banner (page-level)
+  autoImport: {
+    pendingTitle: 'Archives en attente de confirmation',
+    extract: 'Extraire',
   },
 
   // Status bar
@@ -381,6 +424,8 @@ export default {
     browse: 'Parcourir...',
     errors: 'Erreurs',
     andMore: '... et {count} autres',
+    copy: 'Copier',
+    copied: 'Copié !',
   },
 
   errors: {
@@ -405,5 +450,38 @@ export default {
     deleteProduct: 'Êtes-vous sûr de vouloir supprimer ce produit ?',
     reset: 'Êtes-vous sûr de vouloir réinitialiser les paramètres ?',
     cancel: 'Êtes-vous sûr de vouloir annuler ?',
+  },
+
+  downloads: {
+    title: 'Téléchargement en masse',
+    hint: 'Collez vos liens Google Drive ou MediaFire ci-dessous (un par ligne ou texte mixte)',
+    placeholder: 'https://drive.google.com/file/d/...\nhttps://www.mediafire.com/file/...',
+    parseButton: 'Détecter les liens',
+    parsing: 'Analyse...',
+    detected: '{count} lien(s) détecté(s)',
+    destDir: 'Destination',
+    browse: 'Parcourir...',
+    workers: 'DL parallèles',
+    startButton: 'Télécharger {count} fichier(s)',
+    inProgress: 'Téléchargement en cours...',
+    statusPending: 'En attente...',
+    summaryTitle: 'Téléchargement terminé',
+    success: 'Réussis',
+    failed: 'Échoués',
+    skipped: 'Ignorés',
+    totalSize: 'Taille totale',
+    newBatch: 'Nouveau lot',
+    error: 'Erreur :',
+  },
+
+  closeDialog: {
+    title: 'Fermer FileManagerDaz ?',
+    message: 'Que souhaitez-vous faire ?',
+    minimize: 'Réduire en barre système',
+    minimizeHint: 'Continuer en arrière-plan',
+    quit: 'Quitter',
+    quitHint: 'Fermer l\'application',
+    remember: 'Se souvenir de mon choix',
+    cancel: 'Annuler',
   },
 } as const;

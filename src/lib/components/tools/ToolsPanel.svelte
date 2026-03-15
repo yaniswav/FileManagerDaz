@@ -2,8 +2,10 @@
   import { t } from '$lib/i18n';
   import NormalizeFolder from '$lib/components/NormalizeFolder.svelte';
   import Maintenance from '$lib/components/Maintenance.svelte';
+  import DuplicateDetector from '$lib/components/tools/DuplicateDetector.svelte';
+  import SceneAnalyzer from '$lib/components/tools/SceneAnalyzer.svelte';
 
-  type ToolId = 'normalize' | 'maintenance';
+  type ToolId = 'normalize' | 'maintenance' | 'duplicates' | 'analyzer';
   type ToolConfig = { id: ToolId; titleKey: string; descriptionKey: string };
 
   const tools: ToolConfig[] = [
@@ -16,6 +18,16 @@
       id: 'maintenance',
       titleKey: 'tools.maintenance.title',
       descriptionKey: 'tools.maintenance.description',
+    },
+    {
+      id: 'duplicates',
+      titleKey: 'tools.duplicates.title',
+      descriptionKey: 'tools.duplicates.description',
+    },
+    {
+      id: 'analyzer',
+      titleKey: 'tools.analyzer.title',
+      descriptionKey: 'tools.analyzer.description',
     },
   ];
 
@@ -58,6 +70,10 @@
         <NormalizeFolder embedded />
       {:else if activeTool === 'maintenance'}
         <Maintenance embedded />
+      {:else if activeTool === 'duplicates'}
+        <DuplicateDetector embedded />
+      {:else if activeTool === 'analyzer'}
+        <SceneAnalyzer embedded />
       {/if}
     </section>
   </div>

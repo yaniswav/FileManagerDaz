@@ -53,6 +53,10 @@ pub struct NewProduct {
     pub import_task_id: Option<String>,
     pub source_archive: Option<String>,
     pub content_type: Option<String>,
+    /// DAZ global product ID (from Manifest.dsx)
+    pub global_id: Option<String>,
+    /// Vendor/artist name (from DSX metadata)
+    pub vendor: Option<String>,
     /// Optional installed date override (ISO 8601).
     pub installed_at: Option<String>,
     pub tags: String,
@@ -68,6 +72,8 @@ impl NewProduct {
             import_task_id: None,
             source_archive: None,
             content_type: None,
+            global_id: None,
+            vendor: None,
             installed_at: None,
             tags: String::new(),
             files_count: 0,
@@ -105,6 +111,16 @@ impl NewProduct {
         self.total_size = total_size;
         self
     }
+
+    pub fn with_global_id(mut self, global_id: impl Into<String>) -> Self {
+        self.global_id = Some(global_id.into());
+        self
+    }
+
+    pub fn with_vendor(mut self, vendor: impl Into<String>) -> Self {
+        self.vendor = Some(vendor.into());
+        self
+    }
 }
 
 /// Data for product update
@@ -132,4 +148,131 @@ pub struct LibraryProductInput {
     pub thumbnail_path: Option<String>,
     pub files_count: i64,
     pub total_size: i64,
+}
+
+// ============================================================================
+// Library Stats
+// ============================================================================
+
+/// Aggregate statistics for the library dashboard.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryStats {
+    pub total_products: i64,
+    pub total_size_bytes: i64,
+    pub products_by_type: Vec<TypeCount>,
+    pub top_vendors: Vec<VendorCount>,
+    pub recent_products: Vec<Product>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeCount {
+    pub content_type: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorCount {
+    pub vendor: String,
+    pub count: i64,
+}
+
+/// A group of duplicate products (same name + vendor).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroup {
+    pub name: String,
+    pub vendor: Option<String>,
+    pub count: i64,
+    pub products: Vec<Product>,
+}
+
+// ============================================================================
+// Collections
+// ============================================================================
+
+/// A user-defined collection (playlist) of products.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Collection {
+    pub id: i64,
+    pub name: String,
+    pub item_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ============================================================================
+// Maintenance / Uninstaller
+// ============================================================================
+
+/// Report returned by uninstall_product (dry-run or real).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallReport {
+    pub product_id: i64,
+    pub product_name: String,
+    pub files_found: usize,
+    pub files_deleted: usize,
+    pub files_missing: usize,
+    pub bytes_freed: u64,
+    pub errors: Vec<String>,
+    pub dry_run: bool,
+}
+
+/// Result of a product integrity check.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrityReport {
+    pub product_id: i64,
+    pub total_files: usize,
+    pub files_present: usize,
+    pub files_missing: usize,
+    /// 0.0 .. 100.0
+    pub integrity_pct: f64,
+    pub missing_paths: Vec<String>,
+}
+
+// ============================================================================
+// Scene Analysis
+// ============================================================================
+
+/// An installed asset found in the scene, grouped by product.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledAsset {
+    pub relative_path: String,
+    pub product_id: i64,
+    pub product_name: String,
+}
+
+/// Result of analyzing a .duf scene file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneAnalysisReport {
+    pub scene_name: String,
+    pub total_dependencies: usize,
+    pub installed_count: usize,
+    pub missing_count: usize,
+    /// 0.0 .. 100.0
+    pub completion_pct: f64,
+    /// Assets matched to installed products (grouped by product).
+    pub installed_assets: Vec<InstalledAsset>,
+    /// File paths that exist on disk but are not tracked by any product.
+    pub untracked_assets: Vec<String>,
+    /// File paths that are completely missing (not on disk, not in DB).
+    pub missing_assets: Vec<String>,
+    /// Products required by this scene (deduplicated).
+    pub required_products: Vec<RequiredProduct>,
+}
+
+/// A product required by the scene.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredProduct {
+    pub product_id: i64,
+    pub product_name: String,
+    pub files_used: usize,
 }

@@ -19,6 +19,7 @@
 //! ```
 
 use crate::config::settings::SETTINGS;
+use crate::core::manifest;
 use crate::core::trash;
 use crate::db::{Database, NewProduct};
 use crate::db::import_tasks::{ImportTaskStatus, ImportTasksRepository, PersistedImportTask};
@@ -216,6 +217,10 @@ pub async fn complete_import_task(
 
 /// Creates a product record from a completed import task.
 /// Returns `Ok(true)` if created, `Ok(false)` if skipped (already exists or missing data).
+///
+/// Also parses Manifest.dsx/Supplement.dsx from the destination to:
+/// - Enrich product metadata (global_id, product name)
+/// - Store per-file inventory in `product_files` table
 fn upsert_product_from_task(
     products_db_state: &State<'_, DbState>,
     task: &PersistedImportTask,
@@ -248,6 +253,24 @@ fn upsert_product_from_task(
         new_product = new_product.with_content_type(content_type.clone());
     }
 
+    // Parse Manifest.dsx / Supplement.dsx from destination library
+    let product_manifest = manifest::parse_product_manifests(Path::new(destination))
+        .unwrap_or_else(|e| {
+            warn!("Failed to parse manifests in {}: {}", destination, e);
+            manifest::ProductManifest::default()
+        });
+
+    // Enrich product with manifest metadata
+    if let Some(global_id) = &product_manifest.global_id {
+        new_product = new_product.with_global_id(global_id.clone());
+    }
+    // Use Supplement product name if it's more descriptive than the archive filename
+    if let Some(product_name) = &product_manifest.product_name {
+        if !product_name.is_empty() {
+            new_product.name = product_name.clone();
+        }
+    }
+
     let guard = products_db_state
         .0
         .lock()
@@ -262,7 +285,32 @@ fn upsert_product_from_task(
         return Ok(false);
     }
 
-    db.add_product(&new_product)?;
+    let product_id = db.add_product(&new_product)?;
+
+    // Store per-file inventory from manifest
+    if !product_manifest.files.is_empty() {
+        let file_entries: Vec<(String, String)> = product_manifest
+            .files
+            .iter()
+            .map(|f| (f.relative_path.clone(), f.target.clone()))
+            .collect();
+
+        db.with_connection(|conn| {
+            crate::db::product_files::insert_product_files_batch(conn, product_id, &file_entries)
+        })
+        .unwrap_or_else(|e| {
+            warn!("Failed to store product files for {}: {}", task.name, e);
+            0
+        });
+
+        info!(
+            "Stored {} manifest files for product {} (id={})",
+            file_entries.len(),
+            new_product.name,
+            product_id
+        );
+    }
+
     Ok(true)
 }
 

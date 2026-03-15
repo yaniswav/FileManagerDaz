@@ -1,47 +1,227 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { t } from '$lib/i18n';
   import {
     listDazLibraries,
-    listLibraryProducts,
-    searchLibraryProducts,
+    listLibraryProductsPaginated,
+    listProductVendors,
+    listCollections,
     scanLibraryProducts,
     deleteProduct,
     type DazLibrary,
     type Product,
+    type ProductFilters,
+    type Collection,
   } from '$lib/api/commands';
   import ProductCard from '$lib/components/products/ProductCard.svelte';
   import ProductEditDialog from '$lib/components/products/ProductEditDialog.svelte';
+  import LibraryStats from '$lib/components/products/LibraryStats.svelte';
+  import BatchTagEditor from '$lib/components/products/BatchTagEditor.svelte';
+  import CollectionDialog from '$lib/components/products/CollectionDialog.svelte';
+  import UninstallDialog from '$lib/components/products/UninstallDialog.svelte';
   import {
     KNOWN_CONTENT_TYPES,
-    normalizeContentType,
     type KnownContentType,
   } from '$lib/components/products/utils';
 
-  type SortKey = 'date' | 'name' | 'size';
-  type CategoryItem = { path: string; name: string; depth: number; count: number };
+  interface TaskEndPayload {
+    id: string;
+    task_type: string;
+    message: string;
+    progress: number | null;
+    status: string;
+  }
+
+  type SortKey = 'name' | 'date' | 'size';
+
+  const PAGE_SIZE = 50;
 
   let products: Product[] = $state([]);
   let libraries: DazLibrary[] = $state([]);
+  let vendors: string[] = $state([]);
+  let total = $state(0);
   let loading = $state(true);
+  let loadingMore = $state(false);
   let scanning = $state(false);
   let error: string | null = $state(null);
+  let hasMore = $state(true);
 
   let searchQuery = $state('');
-  let contentTypeFilter: 'all' | 'unknown' | KnownContentType = $state('all');
+  let contentTypeFilter: string = $state('all');
+  let vendorFilter: string = $state('all');
   let sortKey: SortKey = $state('name');
   let selectedLibrary = $state('all');
-  let selectedCategory = $state<string | null>(null);
 
   let selectedProduct: Product | null = $state(null);
+  let sentinelEl: HTMLDivElement | undefined = $state(undefined);
+  let searchInputEl: HTMLInputElement | undefined = $state(undefined);
+  let resourceProfile: 'low' | 'normal' | 'max' = $state('normal');
+  let showStats = $state(false);
+
+  // Multi-select
+  let selectedIds: Set<number> = $state(new Set());
+  let showTagEditor = $state(false);
+  let showCollectionDialog = $state(false);
+  let uninstallTarget: Product | null = $state(null);
+  let lastClickedIndex: number | null = $state(null);
+
+  // Collections
+  let collections: Collection[] = $state([]);
+  let collectionFilter: string = $state('all');
+
+  function handleCardClick(id: number, event: MouseEvent) {
+    const currentIndex = products.findIndex((p) => p.id === id);
+
+    if (event.shiftKey && lastClickedIndex !== null) {
+      // Shift+Click: range selection (add range to existing)
+      const start = Math.min(lastClickedIndex, currentIndex);
+      const end = Math.max(lastClickedIndex, currentIndex);
+      for (let i = start; i <= end; i++) {
+        selectedIds.add(products[i].id);
+      }
+    } else if (event.ctrlKey || event.metaKey) {
+      // Ctrl+Click: toggle individual without clearing others
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+      } else {
+        selectedIds.add(id);
+      }
+    } else {
+      // Plain click: select only this one (deselect all others)
+      selectedIds = new Set([id]);
+    }
+
+    lastClickedIndex = currentIndex;
+    selectedIds = new Set(selectedIds); // trigger Svelte 5 reactivity
+  }
+
+  function selectAll() {
+    selectedIds = new Set(products.map((p) => p.id));
+  }
+
+  function deselectAll() {
+    selectedIds = new Set();
+    lastClickedIndex = null;
+  }
 
   let debounceTimer: number | null = null;
   let requestId = 0;
+  let unlistenTaskEnd: UnlistenFn | null = null;
 
   onMount(() => {
     void loadLibraries();
-    void refreshProducts();
+    void loadVendors();
+    void loadCollectionsData();
+    void loadProducts(false);
+
+    // Listen for scan task completion via the global task event system
+    listen<TaskEndPayload>('app-task-end', (event) => {
+      if (event.payload.task_type !== 'scan') return;
+      scanning = false;
+      if (event.payload.status === 'error') {
+        error = event.payload.message;
+      } else {
+        void loadVendors(); // refresh vendor list after scan
+        resetAndReload();
+      }
+    }).then((fn) => (unlistenTaskEnd = fn));
+
+    // Ctrl+K to focus search
+    const handleKeydown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputEl?.focus();
+      }
+      // Ctrl+A: select all products (only when not typing in an input)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return; // don't hijack text inputs
+        e.preventDefault();
+        selectAll();
+      }
+      // Escape: clear selection
+      if (e.key === 'Escape' && selectedIds.size > 0) {
+        deselectAll();
+      }
+    };
+    document.addEventListener('keydown', handleKeydown);
+    return () => document.removeEventListener('keydown', handleKeydown);
   });
+
+  onDestroy(() => {
+    unlistenTaskEnd?.();
+    if (debounceTimer) clearTimeout(debounceTimer);
+  });
+
+  // Intersection Observer for infinite scroll
+  $effect(() => {
+    if (!sentinelEl) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loadingMore && !loading) {
+          void loadMore();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(sentinelEl);
+    return () => observer.disconnect();
+  });
+
+  function buildFilters(offset: number): ProductFilters {
+    return {
+      limit: PAGE_SIZE,
+      offset,
+      searchQuery: searchQuery.trim() || undefined,
+      libraryFilter: selectedLibrary !== 'all' ? selectedLibrary : undefined,
+      typeFilter: contentTypeFilter !== 'all' ? contentTypeFilter : undefined,
+      vendorFilter: vendorFilter !== 'all' ? vendorFilter : undefined,
+      sortBy: sortKey,
+      collectionId: collectionFilter !== 'all' ? Number(collectionFilter) : undefined,
+    };
+  }
+
+  async function loadProducts(append: boolean): Promise<void> {
+    const current = ++requestId;
+    if (!append) {
+      loading = true;
+      error = null;
+    } else {
+      if (loadingMore) return; // Prevent concurrent loads
+      loadingMore = true;
+    }
+
+    try {
+      const offset = append ? products.length : 0;
+      const result = await listLibraryProductsPaginated(buildFilters(offset));
+
+      if (current !== requestId) return;
+      if (append) {
+        products = [...products, ...result.items];
+      } else {
+        products = result.items;
+      }
+      total = result.total;
+
+      // If we received fewer items than requested, there are no more pages
+      hasMore = result.items.length >= PAGE_SIZE && products.length < total;
+    } catch (e) {
+      if (current !== requestId) return;
+      error = e instanceof Error ? e.message : String(e);
+      hasMore = false;
+    } finally {
+      if (current === requestId) {
+        loading = false;
+        loadingMore = false;
+      }
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (loadingMore || !hasMore) return;
+    await loadProducts(true);
+  }
 
   async function loadLibraries(): Promise<void> {
     try {
@@ -51,39 +231,45 @@
     }
   }
 
-  async function refreshProducts(): Promise<void> {
-    const current = ++requestId;
-    loading = true;
-    error = null;
-
+  async function loadVendors(): Promise<void> {
     try {
-      const query = searchQuery.trim();
-      const data = query ? await searchLibraryProducts(query) : await listLibraryProducts();
-
-      if (current !== requestId) return;
-      products = data;
-    } catch (e) {
-      if (current !== requestId) return;
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      if (current === requestId) loading = false;
+      vendors = await listProductVendors();
+    } catch {
+      // non-critical — vendor dropdown will just be empty
     }
+  }
+
+  async function loadCollectionsData(): Promise<void> {
+    try {
+      collections = await listCollections();
+    } catch {
+      // non-critical
+    }
+  }
+
+  function resetAndReload(): void {
+    hasMore = true;
+    void loadProducts(false);
   }
 
   function scheduleSearch(): void {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = window.setTimeout(() => {
       debounceTimer = null;
-      void refreshProducts();
-    }, 250);
+      resetAndReload();
+    }, 300);
+  }
+
+  function handleFilterChange(): void {
+    resetAndReload();
   }
 
   async function handleDelete(id: number): Promise<void> {
     if (!confirm($t('confirm.deleteProduct'))) return;
-
     try {
       await deleteProduct(id);
-      await refreshProducts();
+      products = products.filter((p) => p.id !== id);
+      total = Math.max(0, total - 1);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -93,115 +279,15 @@
     if (scanning) return;
     scanning = true;
     error = null;
-
     try {
       const libraryPath = selectedLibrary === 'all' ? undefined : selectedLibrary;
-      await scanLibraryProducts(libraryPath);
-      await refreshProducts();
+      await scanLibraryProducts(libraryPath, resourceProfile);
+      // Don't set scanning = false here — wait for 'scan-complete' event
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
       scanning = false;
+      error = e instanceof Error ? e.message : String(e);
     }
   }
-
-  function normalizeCategoryPath(value: string): string {
-    return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  }
-
-  function splitCategoryPath(value: string): string[] {
-    const normalized = normalizeCategoryPath(value);
-    if (!normalized) return [];
-    return normalized
-      .split('/')
-      .map((part) => part.trim())
-      .filter(Boolean);
-  }
-
-  function buildCategoryItems(items: Product[]): CategoryItem[] {
-    const nodes = new Map<string, { name: string; children: Set<string>; count: number }>();
-
-    for (const product of items) {
-      const seen = new Set<string>();
-      const categories = product.categories ?? [];
-
-      for (const raw of categories) {
-        const parts = splitCategoryPath(raw);
-        if (parts.length === 0) continue;
-
-        let path = '';
-        for (const part of parts) {
-          path = path ? `${path}/${part}` : part;
-          if (seen.has(path)) continue;
-          seen.add(path);
-
-          let node = nodes.get(path);
-          if (!node) {
-            node = { name: part, children: new Set<string>(), count: 0 };
-            nodes.set(path, node);
-          }
-          node.count += 1;
-        }
-      }
-    }
-
-    for (const path of nodes.keys()) {
-      const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-      if (!parentPath) continue;
-      const parent = nodes.get(parentPath);
-      if (parent) parent.children.add(path);
-    }
-
-    const roots = [...nodes.keys()].filter((path) => {
-      const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-      return !parentPath || !nodes.has(parentPath);
-    });
-
-    const itemsList: CategoryItem[] = [];
-    const walk = (path: string, depth: number): void => {
-      const node = nodes.get(path);
-      if (!node) return;
-      itemsList.push({ path, name: node.name, depth, count: node.count });
-      const children = [...node.children].sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: 'base' })
-      );
-      for (const child of children) {
-        walk(child, depth + 1);
-      }
-    };
-
-    roots
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .forEach((path) => walk(path, 0));
-
-    return itemsList;
-  }
-
-  function matchesCategory(product: Product, path: string | null): boolean {
-    if (!path) return true;
-    const target = normalizeCategoryPath(path);
-    if (!target) return true;
-
-    for (const raw of product.categories ?? []) {
-      const value = normalizeCategoryPath(raw);
-      if (value === target || value.startsWith(`${target}/`)) return true;
-    }
-
-    return false;
-  }
-
-  let libraryFiltered = $derived.by(() => {
-    if (selectedLibrary === 'all') return products;
-    return products.filter((product) => (product.libraryPath ?? '') === selectedLibrary);
-  });
-
-  let categoryItems = $derived.by(() => buildCategoryItems(libraryFiltered));
-
-  $effect(() => {
-    if (selectedCategory && !categoryItems.some((item) => item.path === selectedCategory)) {
-      selectedCategory = null;
-    }
-  });
 
   let libraryNameByPath = $derived.by(() => {
     const map = new Map<string, string>();
@@ -210,171 +296,194 @@
     }
     return map;
   });
-
-  let visibleProducts = $derived.by(() => {
-    const filtered = libraryFiltered.filter((product) => {
-      const normalized = normalizeContentType(product.contentType);
-      if (contentTypeFilter === 'unknown') {
-        if (normalized !== null) return false;
-      } else if (contentTypeFilter !== 'all') {
-        if (normalized !== contentTypeFilter) return false;
-      }
-
-      if (!matchesCategory(product, selectedCategory)) return false;
-      return true;
-    });
-
-    const sorted = [...filtered];
-    switch (sortKey) {
-      case 'name':
-        sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-        break;
-      case 'size':
-        sorted.sort((a, b) => (b.totalSize ?? 0) - (a.totalSize ?? 0));
-        break;
-      case 'date':
-      default:
-        sorted.sort((a, b) => {
-          const at = Date.parse(a.installedAt);
-          const bt = Date.parse(b.installedAt);
-          return (isNaN(bt) ? 0 : bt) - (isNaN(at) ? 0 : at);
-        });
-        break;
-    }
-
-    return sorted;
-  });
 </script>
 
-<div class="products-view">
-  <aside class="filters">
-    <div class="filters-header">
-      <div>
-        <h3>{$t('products.installed')}</h3>
-        <p class="subtitle">{$t('products.libraryCatalog')}</p>
-      </div>
-      <span class="count">{visibleProducts.length}</span>
-    </div>
-
-    <div class="filters-actions">
-      <button
-        type="button"
-        class="btn-primary"
-        onclick={handleScan}
-        disabled={scanning || libraries.length === 0}
-      >
-        {scanning ? $t('products.scanning') : $t('products.scanLibraries')}
-      </button>
-      <button type="button" class="btn-secondary" onclick={refreshProducts} disabled={loading}>
-        {$t('common.refresh')}
-      </button>
-    </div>
-
-    {#if libraries.length === 0}
-      <div class="notice">{$t('products.noLibraries')}</div>
-    {/if}
-
-    <div class="filter-block">
-      <label for="library-filter">{$t('products.library')}</label>
-      <select id="library-filter" bind:value={selectedLibrary}>
-        <option value="all">{$t('products.allLibraries')}</option>
-        {#each libraries as lib}
-          <option value={lib.path}>{lib.name}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="filter-block">
-      <label for="type-filter">{$t('products.contentType')}</label>
-      <select id="type-filter" bind:value={contentTypeFilter}>
-        <option value="all">{$t('common.all')}</option>
-        <option value="unknown">{$t('common.unknown')}</option>
-        {#each KNOWN_CONTENT_TYPES as ct}
-          <option value={ct}>{$t(`products.contentTypes.${ct}`)}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="filter-block">
-      <label>{$t('products.categories')}</label>
-      <div class="category-list">
-        <button
-          type="button"
-          class:active={!selectedCategory}
-          onclick={() => (selectedCategory = null)}
-        >
-          <span class="category-name">{$t('common.all')}</span>
-        </button>
-        {#each categoryItems as item}
+<div class="products-page">
+  <!-- Top toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-row">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+          <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+        </svg>
+        <input
+          type="text"
+          bind:value={searchQuery}
+          bind:this={searchInputEl}
+          placeholder="{$t('products.search')} (Ctrl+K)"
+          oninput={scheduleSearch}
+          onkeydown={(e) => e.key === 'Enter' && resetAndReload()}
+        />
+        {#if searchQuery}
           <button
             type="button"
-            class:active={selectedCategory === item.path}
-            style={`padding-left: ${8 + item.depth * 12}px`}
-            onclick={() => (selectedCategory = item.path)}
-          >
-            <span class="category-name">{item.name}</span>
-            <span class="category-count">{item.count}</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-  </aside>
-
-  <section class="products-main">
-    <div class="toolbar">
-      <input
-        type="text"
-        bind:value={searchQuery}
-        placeholder={$t('products.search')}
-        oninput={scheduleSearch}
-        onkeydown={(e) => e.key === 'Enter' && refreshProducts()}
-      />
-      {#if searchQuery}
-        <button
-          type="button"
-          class="inline-btn"
-          onclick={() => {
-            searchQuery = '';
-            refreshProducts();
-          }}
-        >
-          {$t('common.clear')}
-        </button>
-      {/if}
-
-      <select bind:value={sortKey} title={$t('products.sortBy')}>
-        <option value="name">{$t('products.sortName')}</option>
-        <option value="date">{$t('products.sortDate')}</option>
-        <option value="size">{$t('products.sortSize')}</option>
-      </select>
-    </div>
-
-    {#if loading}
-      <p class="loading">{$t('products.loading')}</p>
-    {:else if error}
-      <div class="error-box">{error}</div>
-    {:else if visibleProducts.length === 0}
-      <div class="empty">
-        <p>{searchQuery ? $t('products.noResults') : $t('products.noProducts')}</p>
-        {#if !searchQuery && libraries.length > 0}
-          <button type="button" class="btn-primary" onclick={handleScan} disabled={scanning}>
-            {scanning ? $t('products.scanning') : $t('products.scanLibraries')}
-          </button>
+            class="clear-btn"
+            onclick={() => { searchQuery = ''; resetAndReload(); }}
+          >✕</button>
         {/if}
       </div>
-    {:else}
-      <div class="products-grid">
-        {#each visibleProducts as product (product.id)}
-          <ProductCard
-            product={product}
-            libraryName={libraryNameByPath.get(product.libraryPath ?? '') ?? product.libraryPath ?? null}
-            ondelete={handleDelete}
-            onedit={(p) => (selectedProduct = p)}
-          />
-        {/each}
+    </div>
+
+    <div class="toolbar-row">
+      <div class="toolbar-filters">
+        <select bind:value={selectedLibrary} onchange={handleFilterChange} title={$t('products.library')}>
+          <option value="all">{$t('products.allLibraries')}</option>
+          {#each libraries as lib}
+            <option value={lib.path}>{lib.name}</option>
+          {/each}
+        </select>
+
+        <select bind:value={contentTypeFilter} onchange={handleFilterChange} title={$t('products.contentType')}>
+          <option value="all">{$t('common.all')}</option>
+          <option value="unknown">{$t('common.unknown')}</option>
+          {#each KNOWN_CONTENT_TYPES as ct}
+            <option value={ct}>{$t(`products.contentTypes.${ct}`)}</option>
+          {/each}
+        </select>
+
+        {#if vendors.length > 0}
+          <select bind:value={vendorFilter} onchange={handleFilterChange} title="Vendor" class="select-vendor">
+            <option value="all">All Vendors</option>
+            {#each vendors as v}
+              <option value={v}>{v}</option>
+            {/each}
+          </select>
+        {/if}
+
+        {#if collections.length > 0}
+          <select bind:value={collectionFilter} onchange={handleFilterChange} title="Collection" class="select-collection">
+            <option value="all">📂 All Collections</option>
+            {#each collections as col}
+              <option value={String(col.id)}>📁 {col.name} ({col.itemCount})</option>
+            {/each}
+          </select>
+        {/if}
+
+        <select bind:value={sortKey} onchange={handleFilterChange} title={$t('products.sortBy')}>
+          <option value="name">{$t('products.sortName')}</option>
+          <option value="date">{$t('products.sortDate')}</option>
+          <option value="size">{$t('products.sortSize')}</option>
+        </select>
+      </div>
+
+      <div class="toolbar-actions">
+        <button
+          type="button"
+          class="btn-stats"
+          class:active={showStats}
+          onclick={() => (showStats = !showStats)}
+          title="Dashboard"
+        >📊</button>
+        <select bind:value={resourceProfile} title="CPU usage" class="select-profile" disabled={scanning}>
+          <option value="low">🐢 Low</option>
+          <option value="normal">⚡ Normal</option>
+          <option value="max">🔥 Max</option>
+        </select>
+        <button type="button" class="btn-scan" onclick={handleScan} disabled={scanning || libraries.length === 0}>
+          {scanning ? $t('products.scanning') : $t('products.scanLibraries')}
+        </button>
+        <button type="button" class="btn-refresh" onclick={resetAndReload} disabled={loading}>
+          {$t('common.refresh')}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard stats panel (collapsible) -->
+  {#if showStats}
+    <LibraryStats />
+  {/if}
+
+  <!-- Active filters chips -->
+  {#if searchQuery || selectedLibrary !== 'all' || contentTypeFilter !== 'all' || vendorFilter !== 'all' || collectionFilter !== 'all'}
+    <div class="active-filters">
+      {#if searchQuery}
+        <span class="chip">
+          🔍 {searchQuery}
+          <button type="button" onclick={() => { searchQuery = ''; resetAndReload(); }}>✕</button>
+        </span>
+      {/if}
+      {#if selectedLibrary !== 'all'}
+        <span class="chip">
+          📁 {libraryNameByPath.get(selectedLibrary) ?? selectedLibrary}
+          <button type="button" onclick={() => { selectedLibrary = 'all'; handleFilterChange(); }}>✕</button>
+        </span>
+      {/if}
+      {#if contentTypeFilter !== 'all'}
+        <span class="chip">
+          🏷️ {contentTypeFilter === 'unknown' ? $t('common.unknown') : $t(`products.contentTypes.${contentTypeFilter}`)}
+          <button type="button" onclick={() => { contentTypeFilter = 'all'; handleFilterChange(); }}>✕</button>
+        </span>
+      {/if}
+      {#if vendorFilter !== 'all'}
+        <span class="chip">
+          👤 {vendorFilter}
+          <button type="button" onclick={() => { vendorFilter = 'all'; handleFilterChange(); }}>✕</button>
+        </span>
+      {/if}
+      {#if collectionFilter !== 'all'}
+        <span class="chip">
+          📂 {collections.find(c => String(c.id) === collectionFilter)?.name ?? 'Collection'}
+          <button type="button" onclick={() => { collectionFilter = 'all'; handleFilterChange(); }}>✕</button>
+        </span>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Count bar -->
+  {#if !loading && !error}
+    <div class="count-bar">
+      <span class="count-text">
+        {$t('products.showingCount').replace('{count}', String(products.length)).replace('{total}', String(total))}
+      </span>
+    </div>
+  {/if}
+
+  <!-- Content area -->
+  {#if loading}
+    <div class="state-msg">
+      <div class="spinner"></div>
+      <p>{$t('products.loading')}</p>
+    </div>
+  {:else if error}
+    <div class="error-box">{error}</div>
+  {:else if products.length === 0}
+    <div class="state-msg">
+      <p>{searchQuery ? $t('products.noResults') : $t('products.noProducts')}</p>
+      {#if !searchQuery && libraries.length > 0}
+        <button type="button" class="btn-scan" onclick={handleScan} disabled={scanning}>
+          {scanning ? $t('products.scanning') : $t('products.scanLibraries')}
+        </button>
+      {/if}
+      {#if libraries.length === 0}
+        <p class="hint">{$t('products.noLibraries')}</p>
+      {/if}
+    </div>
+  {:else}
+    <div class="products-grid">
+      {#each products as product (product.id)}
+        <ProductCard
+          {product}
+          libraryName={libraryNameByPath.get(product.libraryPath ?? '') ?? null}
+          selected={selectedIds.has(product.id)}
+          ondelete={handleDelete}
+          onedit={(p) => (selectedProduct = p)}
+          onuninstall={(p) => (uninstallTarget = p)}
+          onselect={handleCardClick}
+        />
+      {/each}
+    </div>
+
+    <!-- Infinite scroll sentinel -->
+    {#if hasMore}
+      <div class="sentinel" bind:this={sentinelEl}>
+        {#if loadingMore}
+          <div class="spinner"></div>
+          <span>{$t('products.loadMore')}</span>
+        {/if}
       </div>
     {/if}
-  </section>
+  {/if}
 </div>
 
 {#if selectedProduct}
@@ -383,221 +492,406 @@
     onclose={() => (selectedProduct = null)}
     onsaved={(updated) => {
       products = products.map((p) => (p.id === updated.id ? updated : p));
-      if (searchQuery.trim()) void refreshProducts();
+    }}
+    onuninstall={(p) => {
+      selectedProduct = null;
+      uninstallTarget = p;
+    }}
+  />
+{/if}
+
+<!-- Floating batch action bar -->
+{#if selectedIds.size > 1}
+  <div class="batch-bar">
+    <span class="batch-count">{selectedIds.size} selected</span>
+    <button type="button" class="batch-btn" onclick={selectAll}>Select all ({products.length})</button>
+    <button type="button" class="batch-btn" onclick={deselectAll}>Deselect all</button>
+    <button type="button" class="batch-btn accent" onclick={() => (showTagEditor = true)}>🏷️ Edit Tags</button>
+    <button type="button" class="batch-btn accent" onclick={() => (showCollectionDialog = true)}>📂 Add to Collection</button>
+    <button type="button" class="batch-btn cancel" onclick={deselectAll}>✕</button>
+  </div>
+{/if}
+
+{#if showTagEditor}
+  <BatchTagEditor
+    selectedIds={[...selectedIds]}
+    onclose={() => (showTagEditor = false)}
+    onapplied={() => { showTagEditor = false; deselectAll(); resetAndReload(); }}
+  />
+{/if}
+
+{#if showCollectionDialog}
+  <CollectionDialog
+    productIds={[...selectedIds]}
+    onclose={() => (showCollectionDialog = false)}
+    onadded={() => { showCollectionDialog = false; deselectAll(); void loadCollectionsData(); }}
+  />
+{/if}
+
+{#if uninstallTarget}
+  <UninstallDialog
+    product={uninstallTarget}
+    onclose={() => (uninstallTarget = null)}
+    onuninstalled={(id) => {
+      uninstallTarget = null;
+      products = products.filter((p) => p.id !== id);
+      total = Math.max(0, total - 1);
     }}
   />
 {/if}
 
 <style>
-  .products-view {
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) 1fr;
-    gap: 1.25rem;
-  }
-
-  .filters {
-    background-color: var(--bg-secondary);
-    border-radius: var(--border-radius);
-    padding: 1rem;
+  .products-page {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    height: fit-content;
-  }
-
-  .filters-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
     gap: 0.75rem;
   }
 
-  .filters-header h3 {
-    margin: 0;
-    color: var(--accent);
-  }
-
-  .subtitle {
-    margin: 0.25rem 0 0;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-  }
-
-  .count {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .filters-actions {
+  /* ---- Toolbar ---- */
+  .toolbar {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 0.5rem;
+    background: var(--bg-secondary);
+    padding: 0.75rem 1rem;
+    border-radius: var(--border-radius);
   }
 
-  .btn-primary,
-  .btn-secondary {
-    padding: 0.5rem 0.8rem;
+  .toolbar-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    pointer-events: none;
+  }
+
+  .search-box input {
+    width: 100%;
+    padding: 0.5rem 2rem 0.5rem 2rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    box-sizing: border-box;
+  }
+
+  .search-box input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .clear-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 2px 6px;
+    border-radius: 50%;
+  }
+
+  .clear-btn:hover {
+    background: var(--bg-hover);
+  }
+
+  .toolbar-filters {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .toolbar-filters select {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .select-vendor {
+    max-width: 180px;
+  }
+
+  .select-collection {
+    max-width: 200px;
+  }
+
+  .toolbar-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
+  .btn-scan,
+  .btn-refresh {
+    padding: 0.45rem 0.8rem;
     border-radius: 10px;
     border: 1px solid var(--border-color);
     cursor: pointer;
     font-size: 0.85rem;
+    white-space: nowrap;
   }
 
-  .btn-primary {
+  .btn-scan {
     background: var(--accent);
     color: white;
     border-color: var(--accent);
   }
 
-  .btn-secondary {
+  .btn-refresh {
     background: var(--bg-tertiary);
     color: var(--text-primary);
   }
 
-  .btn-primary:disabled,
-  .btn-secondary:disabled {
+  .btn-scan:disabled,
+  .btn-refresh:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
 
-  .notice {
-    padding: 0.6rem 0.75rem;
+  .select-profile {
+    padding: 0.45rem 0.5rem;
     border-radius: 10px;
+    border: 1px solid var(--border-color);
     background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    cursor: pointer;
   }
 
-  .filter-block {
+  .select-profile:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* ---- Active filter chips ---- */
+  .active-filters {
     display: flex;
-    flex-direction: column;
     gap: 0.4rem;
-  }
-
-  .filter-block label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-  }
-
-  select,
-  .toolbar input {
-    padding: 0.45rem 0.6rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    background-color: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.9rem;
-  }
-
-  .category-list {
-    border: 1px solid var(--border-color);
-    background: var(--bg-primary);
-    border-radius: 12px;
-    padding: 0.3rem;
-    max-height: 320px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-
-  .category-list button {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    padding: 0.3rem 0.4rem;
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .category-list button:hover {
-    background: var(--bg-hover);
-  }
-
-  .category-list button.active {
-    background: rgba(79, 70, 229, 0.2);
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .category-count {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-
-  .products-main {
-    background-color: var(--bg-secondary);
-    border-radius: var(--border-radius);
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    min-width: 0;
-  }
-
-  .toolbar {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
     flex-wrap: wrap;
+    padding: 0 0.25rem;
   }
 
-  .toolbar input {
-    flex: 1;
-    min-width: 180px;
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    background: rgba(79, 70, 229, 0.15);
+    color: var(--accent);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 500;
   }
 
-  .inline-btn {
-    padding: 0.45rem 0.7rem;
-    border-radius: 10px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+  .chip button {
+    background: none;
+    border: none;
+    color: inherit;
     cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0;
+    line-height: 1;
+    opacity: 0.7;
   }
 
-  .inline-btn:hover {
-    background: var(--bg-hover);
+  .chip button:hover {
+    opacity: 1;
   }
 
-  .loading,
-  .empty {
+  /* ---- Count bar ---- */
+  .count-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.25rem;
+  }
+
+  .count-text {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+
+  /* ---- Products grid ---- */
+  .products-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+  }
+
+  /* ---- States ---- */
+  .state-msg {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 3rem 1rem;
     color: var(--text-secondary);
     text-align: center;
-    padding: 2rem 1rem;
   }
 
-  .empty p {
-    margin: 0 0 1rem;
+  .state-msg p {
+    margin: 0;
+  }
+
+  .hint {
+    font-size: 0.85rem;
+    opacity: 0.7;
   }
 
   .error-box {
     padding: 0.75rem;
-    background-color: rgba(233, 69, 96, 0.2);
+    background: rgba(233, 69, 96, 0.15);
     border: 1px solid var(--error);
     border-radius: var(--border-radius);
     color: var(--error);
   }
 
-  .products-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 0.9rem;
+  /* ---- Sentinel / Loading more ---- */
+  .sentinel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.5rem 0;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
   }
 
-  @media (max-width: 920px) {
-    .products-view {
-      grid-template-columns: 1fr;
+  /* ---- Spinner ---- */
+  .spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (max-width: 640px) {
+    .toolbar {
+      flex-direction: column;
+      align-items: stretch;
     }
 
-    .filters {
-      position: static;
+    .toolbar-actions {
+      margin-left: 0;
     }
+
+    .products-grid {
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    }
+  }
+
+  /* ---- Stats toggle button ---- */
+  .btn-stats {
+    background: transparent;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 6px;
+    padding: 0.35rem 0.6rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-stats:hover {
+    background: var(--bg-hover, #333);
+  }
+  .btn-stats.active {
+    background: var(--accent-color, #8b5cf6);
+    border-color: var(--accent-color, #8b5cf6);
+  }
+
+  /* ---- Floating batch action bar ---- */
+  .batch-bar {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: var(--bg-secondary, #1e1e2f);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 100;
+    animation: slideUp 0.2s ease;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+    to { transform: translateX(-50%) translateY(0); opacity: 1; }
+  }
+
+  .batch-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent, #8b5cf6);
+    padding-right: 0.5rem;
+    border-right: 1px solid var(--border-color, #444);
+  }
+
+  .batch-btn {
+    padding: 0.4rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #444);
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s;
+  }
+
+  .batch-btn:hover {
+    background: var(--bg-hover, #333);
+  }
+
+  .batch-btn.accent {
+    background: var(--accent, #8b5cf6);
+    color: white;
+    border-color: var(--accent, #8b5cf6);
+  }
+
+  .batch-btn.accent:hover {
+    opacity: 0.9;
+  }
+
+  .batch-btn.cancel {
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    padding: 0.3rem 0.5rem;
   }
 </style>
