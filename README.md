@@ -134,7 +134,7 @@ FileManagerDaz/
 - [ ] **Content Preview**  Preview textures and thumbnails before installation
 - [ ] **Cloud Backup**  Sync library metadata to cloud storage
 - [ ] **Plugin System**  Extensible architecture for custom analyzers
-- [ ] **macOS/Linux Support**  Cross-platform builds
+- [x] **macOS/Linux Support**  Cross-platform builds
 
 ## Contributing
 
