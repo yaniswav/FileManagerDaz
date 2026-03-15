@@ -31,7 +31,7 @@ FileManagerDaz handles recursive extraction of ZIP/7z/RAR archives, detects DAZ 
 
 ## Status
 
-🚧 **Development Preview** — This project is under active development and usable for testing. Core features (import, extraction, library management) are functional. Expect occasional bugs and breaking changes until v1.0.
+✅ **Stable** — v1.2.0. Core features are functional and actively maintained.
 
 ## Features
 
@@ -44,6 +44,11 @@ FileManagerDaz handles recursive extraction of ZIP/7z/RAR archives, detects DAZ 
 - **Task History**  Track import progress with detailed logs and retry failed imports
 - **Folder Normalization**  Batch-process messy download folders into organized libraries
 - **Maintenance Tools**  Detect duplicates, orphaned files, and clean up empty folders
+- **Smart Uninstaller**  Safely remove products from disk and database with dry-run preview
+- **Integrity Checker**  Verify installed products have all expected files on disk
+- **Scene Analyzer**  Parse `.duf` scenes to identify required products and missing assets
+- **Desktop Selection**  Windows Explorer-style Ctrl/Shift/Click multi-selection
+- **Collections**  Organize products into custom collections with batch tagging
 
 ## Screenshots
 
@@ -122,9 +127,11 @@ FileManagerDaz/
 
 ## Roadmap
 
-- [ ] **Batch Import Queue**  Process multiple archives with priority management
+- [x] **Smart Uninstaller**  Safe product removal with dry-run preview
+- [x] **Scene Analyzer**  Parse `.duf` scenes and cross-reference dependencies
+- [x] **Integrity Checker**  Verify product file completeness on disk
+- [x] **Desktop Selection**  Ctrl/Shift/Click multi-selection UX
 - [ ] **Content Preview**  Preview textures and thumbnails before installation
-- [ ] **Dependency Detection**  Identify required base figures and morphs
 - [ ] **Cloud Backup**  Sync library metadata to cloud storage
 - [ ] **Plugin System**  Extensible architecture for custom analyzers
 - [ ] **macOS/Linux Support**  Cross-platform builds
