@@ -349,6 +349,13 @@ export default {
     developer: {
       title: 'Developer options',
     },
+    about: {
+      title: 'About',
+      version: 'Version',
+      checkUpdates: 'Check for Updates',
+      checking: 'Checking...',
+      downloading: 'Downloading update',
+    },
     save: 'Save',
     saved: 'Settings saved',
     cancel: 'Cancel',

@@ -352,6 +352,13 @@ export default {
     developer: {
       title: 'Options développeur',
     },
+    about: {
+      title: 'À propos',
+      version: 'Version',
+      checkUpdates: 'Rechercher des mises à jour',
+      checking: 'Vérification...',
+      downloading: 'Téléchargement de la mise à jour',
+    },
     save: 'Enregistrer',
     saved: 'Paramètres sauvegardés',
     cancel: 'Annuler',

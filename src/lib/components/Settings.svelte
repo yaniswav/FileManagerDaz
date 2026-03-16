@@ -24,6 +24,8 @@
     type DazLibrary,
   } from '$lib/api/commands';
   import { t, locale, setLocale, LOCALE_NAMES, type Locale } from '$lib/i18n';
+  import { getVersion } from '@tauri-apps/api/app';
+  import { checkForUpdates, updaterState } from '$lib/api/updater';
 
   let config: AppConfig | null = $state(null);
   let loading = $state(true);
@@ -33,6 +35,7 @@
   let savingTrashSetting = $state(false);
   let savingDevLogTimings = $state(false);
   let savingDevLogDetails = $state(false);
+  let appVersion = $state('');
   let savingLanguage = $state(false);
   let savingMinimizeToTray = $state(false);
   let savingAutoImport = $state(false);
@@ -44,6 +47,7 @@
 
   onMount(async () => {
     await loadConfig();
+    appVersion = await getVersion();
   });
 
   async function loadConfig() {
@@ -644,6 +648,37 @@
       {/if}
     </section>
   {/if}
+
+  <!-- ═══ ABOUT ═══ -->
+  <section class="settings-card">
+    <div class="card-header">
+      <div class="card-title">
+        <span class="card-icon">ℹ️</span>
+        <h2>{$t('settings.about.title')}</h2>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="about-row">
+        <span class="about-label">{$t('settings.about.version')}</span>
+        <span class="about-value">v{appVersion}</span>
+      </div>
+      <div class="about-row">
+        <button
+          class="btn-update"
+          onclick={() => checkForUpdates(false)}
+          disabled={updaterState.checking || updaterState.downloading}
+        >
+          {#if updaterState.downloading}
+            ⏳ {$t('settings.about.downloading')} ({updaterState.progress}%)
+          {:else if updaterState.checking}
+            🔍 {$t('settings.about.checking')}
+          {:else}
+            🔄 {$t('settings.about.checkUpdates')}
+          {/if}
+        </button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <style>
@@ -1275,6 +1310,52 @@
     font-size: 0.85rem;
     margin-top: 0.3rem;
     opacity: 0.7;
+  }
+
+  /* ═══ About Section ═══ */
+  .about-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+  }
+
+  .about-row + .about-row {
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.75rem;
+  }
+
+  .about-label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  .about-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-family: monospace;
+  }
+
+  .btn-update {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    width: 100%;
+    transition: filter 0.15s;
+  }
+
+  .btn-update:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+
+  .btn-update:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
   }
 </style>
 

@@ -16,6 +16,7 @@
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
   import { t, initLocale } from '$lib/i18n';
+  import { checkForUpdates } from '$lib/api/updater';
 
   let activeTab: 'extract' | 'products' | 'tools' | 'downloads' | 'settings' = $state('extract');
   let productsRefreshKey = $state(0);
@@ -122,6 +123,9 @@
     unlistenClose = await listen('close-requested', () => {
       showCloseDialog = true;
     });
+
+    // Silent update check on startup (no toast if already up-to-date)
+    checkForUpdates(true).catch(() => {});
   });
 
   onDestroy(() => {
