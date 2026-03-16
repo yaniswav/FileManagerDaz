@@ -544,11 +544,11 @@ impl Database {
         })
     }
 
-    /// Lists products indexed from DAZ libraries.
+    /// Lists all products.
     pub fn list_library_products(&self) -> AppResult<Vec<Product>> {
         self.with_connection(|conn| {
             let sql = format!(
-                "SELECT {} FROM products WHERE origin = 'library' ORDER BY name COLLATE NOCASE",
+                "SELECT {} FROM products ORDER BY name COLLATE NOCASE",
                 PRODUCT_SELECT_FIELDS
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -561,12 +561,12 @@ impl Database {
         })
     }
 
-    /// Searches products indexed from DAZ libraries.
+    /// Searches products by text query.
     pub fn search_library_products(&self, query: &str) -> AppResult<Vec<Product>> {
         self.with_connection(|conn| {
             let pattern = format!("%{}%", query);
             let sql = format!(
-                "SELECT {} FROM products WHERE origin = 'library' AND (name LIKE ?1 OR tags LIKE ?1 OR content_type LIKE ?1 OR vendor LIKE ?1 OR categories LIKE ?1) ORDER BY name COLLATE NOCASE",
+                "SELECT {} FROM products WHERE (name LIKE ?1 OR tags LIKE ?1 OR content_type LIKE ?1 OR vendor LIKE ?1 OR categories LIKE ?1) ORDER BY name COLLATE NOCASE",
                 PRODUCT_SELECT_FIELDS
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -594,7 +594,7 @@ impl Database {
         collection_id: Option<i64>,
     ) -> AppResult<(Vec<Product>, i64)> {
         self.with_connection(|conn| {
-            let mut conditions = vec!["origin = 'library'".to_string()];
+            let mut conditions: Vec<String> = Vec::new();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
             let mut param_idx = 1u32;
 
@@ -611,13 +611,17 @@ impl Database {
             if let Some(q) = search_query {
                 let trimmed = q.trim();
                 if !trimmed.is_empty() {
-                    let pattern = format!("%{}%", trimmed);
-                    conditions.push(format!(
-                        "(name LIKE ?{i} OR tags LIKE ?{i} OR content_type LIKE ?{i} OR vendor LIKE ?{i} OR categories LIKE ?{i})",
-                        i = param_idx
-                    ));
-                    params.push(Box::new(pattern));
-                    param_idx += 1;
+                    // Tokenized search: split query into words, each must match at least one field
+                    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+                    for token in tokens {
+                        let pattern = format!("%{}%", token);
+                        conditions.push(format!(
+                            "(name LIKE ?{i} OR tags LIKE ?{i} OR content_type LIKE ?{i} OR vendor LIKE ?{i} OR categories LIKE ?{i})",
+                            i = param_idx
+                        ));
+                        params.push(Box::new(pattern));
+                        param_idx += 1;
+                    }
                 }
             }
 
@@ -658,7 +662,11 @@ impl Database {
                 }
             }
 
-            let where_clause = conditions.join(" AND ");
+            let where_clause = if conditions.is_empty() {
+                "1=1".to_string()
+            } else {
+                conditions.join(" AND ")
+            };
 
             // Count total matching rows
             let count_sql = format!("SELECT COUNT(*) FROM products {} WHERE {}", join_clause, where_clause);
@@ -696,11 +704,11 @@ impl Database {
         })
     }
 
-    /// Returns a sorted list of distinct non-null vendor names for library products.
+    /// Returns a sorted list of distinct non-null vendor names.
     pub fn list_distinct_vendors(&self) -> AppResult<Vec<String>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT DISTINCT vendor FROM products WHERE origin = 'library' AND vendor IS NOT NULL AND vendor != '' ORDER BY vendor COLLATE NOCASE"
+                "SELECT DISTINCT vendor FROM products WHERE vendor IS NOT NULL AND vendor != '' ORDER BY vendor COLLATE NOCASE"
             )?;
             let vendors = stmt
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -715,7 +723,7 @@ impl Database {
         self.with_connection(|conn| {
             // Total count + total size in a single query
             let (total_products, total_size_bytes): (i64, i64) = conn.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(total_size), 0) FROM products WHERE origin = 'library'",
+                "SELECT COUNT(*), COALESCE(SUM(total_size), 0) FROM products",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
@@ -723,7 +731,7 @@ impl Database {
             // Products by content type
             let mut stmt = conn.prepare(
                 "SELECT COALESCE(NULLIF(content_type, ''), 'unknown') AS ct, COUNT(*) \
-                 FROM products WHERE origin = 'library' \
+                 FROM products \
                  GROUP BY ct ORDER BY COUNT(*) DESC"
             )?;
             let products_by_type: Vec<TypeCount> = stmt
@@ -739,7 +747,7 @@ impl Database {
             // Top 10 vendors
             let mut stmt = conn.prepare(
                 "SELECT vendor, COUNT(*) as cnt FROM products \
-                 WHERE origin = 'library' AND vendor IS NOT NULL AND vendor != '' \
+                 WHERE vendor IS NOT NULL AND vendor != '' \
                  GROUP BY vendor ORDER BY cnt DESC LIMIT 10"
             )?;
             let top_vendors: Vec<VendorCount> = stmt
@@ -755,7 +763,7 @@ impl Database {
             // Recent products (last 5 added)
             let mut stmt = conn.prepare(
                 &format!(
-                    "SELECT {} FROM products WHERE origin = 'library' ORDER BY installed_at DESC LIMIT 5",
+                    "SELECT {} FROM products ORDER BY installed_at DESC LIMIT 5",
                     PRODUCT_SELECT_FIELDS
                 )
             )?;

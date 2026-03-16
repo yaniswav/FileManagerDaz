@@ -22,6 +22,7 @@
   import BatchTagEditor from '$lib/components/products/BatchTagEditor.svelte';
   import CollectionDialog from '$lib/components/products/CollectionDialog.svelte';
   import UninstallDialog from '$lib/components/products/UninstallDialog.svelte';
+  import { completedTasks } from '$lib/stores/imports';
   import {
     KNOWN_CONTENT_TYPES,
     type KnownContentType,
@@ -134,6 +135,7 @@
   let debounceTimer: number | null = null;
   let requestId = 0;
   let unlistenTaskEnd: UnlistenFn | null = null;
+  let unsubscribeCompleted: (() => void) | null = null;
 
   onMount(() => {
     void loadLibraries();
@@ -154,6 +156,16 @@
         resetAndReload();
       }
     }).then((fn) => (unlistenTaskEnd = fn));
+
+    // Auto-refresh when new imports complete
+    let prevCompletedCount = 0;
+    unsubscribeCompleted = completedTasks.subscribe((tasks) => {
+      if (tasks.length > prevCompletedCount && prevCompletedCount > 0) {
+        void loadVendors();
+        resetAndReload();
+      }
+      prevCompletedCount = tasks.length;
+    });
 
     // Ctrl+K to focus search
     const handleKeydown = (e: KeyboardEvent) => {
@@ -216,6 +228,7 @@
 
   onDestroy(() => {
     unlistenTaskEnd?.();
+    unsubscribeCompleted?.();
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
