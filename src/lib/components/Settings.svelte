@@ -320,7 +320,7 @@
             onclick={() => handleLanguageChange('fr')}
             disabled={savingLanguage}
           >
-            🇫🇷 {LOCALE_NAMES.fr}
+            {LOCALE_NAMES.fr}
           </button>
           <button
             class="pill"
@@ -328,7 +328,7 @@
             onclick={() => handleLanguageChange('en')}
             disabled={savingLanguage}
           >
-            🇬🇧 {LOCALE_NAMES.en}
+            {LOCALE_NAMES.en}
           </button>
         </div>
       </div>
