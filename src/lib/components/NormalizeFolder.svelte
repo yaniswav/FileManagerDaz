@@ -11,6 +11,7 @@
     listDazLibraries,
     formatFileSize,
   } from '$lib/api/commands';
+  import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
 
   // Props
   interface Props {
@@ -23,7 +24,7 @@
   // States
   let sourceFolder = $state<string | null>(null);
   let libraries: DazLibrary[] = $state([]);
-  let selectedLibrary = $state<string | null>(null);
+  let selectedLibrary = $state<string>('');
   let loading = $state(false);
   let processing = $state(false);
   let result = $state<NormalizeBatchResult | null>(null);
@@ -154,13 +155,12 @@
     <!-- Destination selection -->
     <section class="dest-section">
       <label for="dest-library">{$t('tools.normalize.destLibrary')}</label>
-      <select id="dest-library" bind:value={selectedLibrary} disabled={processing || loading}>
-        {#each libraries as lib}
-          <option value={lib.path}>
-            {lib.name} {lib.isDefault ? $t('common.default') : ''}
-          </option>
-        {/each}
-      </select>
+      <CustomSelect
+        id="dest-library"
+        bind:value={selectedLibrary}
+        disabled={processing || loading}
+        options={libraries.map(lib => ({ value: lib.path, label: `${lib.name}${lib.isDefault ? ' ' + $t('common.default') : ''}` }))}
+      />
     </section>
 
     <!-- Bouton de lancement -->

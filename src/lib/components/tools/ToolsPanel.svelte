@@ -5,6 +5,7 @@
   import DuplicateDetector from '$lib/components/tools/DuplicateDetector.svelte';
   import SceneAnalyzer from '$lib/components/tools/SceneAnalyzer.svelte';
   import Downloads from '$lib/components/Downloads.svelte';
+  import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
 
   type ToolId = 'normalize' | 'maintenance' | 'duplicates' | 'analyzer' | 'downloads' | 'migration';
   type ToolConfig = { id: ToolId; titleKey: string };
@@ -61,18 +62,22 @@
           <div class="migration-form">
             <label class="field">
               <span class="field-label">{$t('tools.migration.source')}</span>
-              <select bind:value={sourceLibrary}>
-                <option value="" disabled>{$t('tools.migration.selectLibrary')}</option>
-              </select>
+              <CustomSelect
+                bind:value={sourceLibrary}
+                placeholder={$t('tools.migration.selectLibrary')}
+                options={[]}
+              />
             </label>
 
             <span class="arrow">→</span>
 
             <label class="field">
               <span class="field-label">{$t('tools.migration.destination')}</span>
-              <select bind:value={destLibrary}>
-                <option value="" disabled>{$t('tools.migration.selectLibrary')}</option>
-              </select>
+              <CustomSelect
+                bind:value={destLibrary}
+                placeholder={$t('tools.migration.selectLibrary')}
+                options={[]}
+              />
             </label>
           </div>
 

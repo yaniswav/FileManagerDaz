@@ -13,6 +13,7 @@
     type IntegrityReport,
   } from '$lib/api/commands';
   import { KNOWN_CONTENT_TYPES, normalizeContentType, getContentTypeIcon } from './utils';
+  import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
 
   interface Props {
     product: Product;
@@ -227,11 +228,11 @@
 
           <div class="form-group">
             <label for="ed-type">{$t('common.type')}</label>
-            <select id="ed-type" bind:value={contentType}>
-              {#each KNOWN_CONTENT_TYPES as ct}
-                <option value={ct}>{getContentTypeLabel(ct)}</option>
-              {/each}
-            </select>
+            <CustomSelect
+              id="ed-type"
+              bind:value={contentType}
+              options={KNOWN_CONTENT_TYPES.map(ct => ({ value: ct, label: getContentTypeLabel(ct) }))}
+            />
           </div>
 
           <div class="form-group">

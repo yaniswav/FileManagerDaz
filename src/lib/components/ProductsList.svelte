@@ -14,6 +14,7 @@
     type ProductFilters,
     type Collection,
   } from '$lib/api/commands';
+  import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
   import ProductCard from '$lib/components/products/ProductCard.svelte';
   import ProductEditDialog from '$lib/components/products/ProductEditDialog.svelte';
   import LibraryStats from '$lib/components/products/LibraryStats.svelte';
@@ -326,44 +327,63 @@
 
     <div class="toolbar-row">
       <div class="toolbar-filters">
-        <select bind:value={selectedLibrary} onchange={handleFilterChange} title={$t('products.library')}>
-          <option value="all">{$t('products.allLibraries')}</option>
-          {#each libraries as lib}
-            <option value={lib.path}>{lib.name}</option>
-          {/each}
-        </select>
+        <CustomSelect
+          bind:value={selectedLibrary}
+          onchange={() => handleFilterChange()}
+          title={$t('products.library')}
+          options={[
+            { value: 'all', label: $t('products.allLibraries') },
+            ...libraries.map(lib => ({ value: lib.path, label: lib.name }))
+          ]}
+        />
 
-        <select bind:value={contentTypeFilter} onchange={handleFilterChange} title={$t('products.contentType')}>
-          <option value="all">{$t('common.all')}</option>
-          <option value="unknown">{$t('common.unknown')}</option>
-          {#each KNOWN_CONTENT_TYPES as ct}
-            <option value={ct}>{$t(`products.contentTypes.${ct}`)}</option>
-          {/each}
-        </select>
+        <CustomSelect
+          bind:value={contentTypeFilter}
+          onchange={() => handleFilterChange()}
+          title={$t('products.contentType')}
+          options={[
+            { value: 'all', label: $t('common.all') },
+            { value: 'unknown', label: $t('common.unknown') },
+            ...KNOWN_CONTENT_TYPES.map(ct => ({ value: ct, label: $t(`products.contentTypes.${ct}`) }))
+          ]}
+        />
 
         {#if vendors.length > 0}
-          <select bind:value={vendorFilter} onchange={handleFilterChange} title="Vendor" class="select-vendor">
-            <option value="all">All Vendors</option>
-            {#each vendors as v}
-              <option value={v}>{v}</option>
-            {/each}
-          </select>
+          <CustomSelect
+            bind:value={vendorFilter}
+            onchange={() => handleFilterChange()}
+            title="Vendor"
+            class="select-vendor"
+            options={[
+              { value: 'all', label: 'All Vendors' },
+              ...vendors.map(v => ({ value: v, label: v }))
+            ]}
+          />
         {/if}
 
         {#if collections.length > 0}
-          <select bind:value={collectionFilter} onchange={handleFilterChange} title="Collection" class="select-collection">
-            <option value="all">📂 All Collections</option>
-            {#each collections as col}
-              <option value={String(col.id)}>📁 {col.name} ({col.itemCount})</option>
-            {/each}
-          </select>
+          <CustomSelect
+            bind:value={collectionFilter}
+            onchange={() => handleFilterChange()}
+            title="Collection"
+            class="select-collection"
+            options={[
+              { value: 'all', label: 'All Collections' },
+              ...collections.map(col => ({ value: String(col.id), label: `${col.name} (${col.itemCount})` }))
+            ]}
+          />
         {/if}
 
-        <select bind:value={sortKey} onchange={handleFilterChange} title={$t('products.sortBy')}>
-          <option value="name">{$t('products.sortName')}</option>
-          <option value="date">{$t('products.sortDate')}</option>
-          <option value="size">{$t('products.sortSize')}</option>
-        </select>
+        <CustomSelect
+          bind:value={sortKey}
+          onchange={() => handleFilterChange()}
+          title={$t('products.sortBy')}
+          options={[
+            { value: 'name', label: $t('products.sortName') },
+            { value: 'date', label: $t('products.sortDate') },
+            { value: 'size', label: $t('products.sortSize') },
+          ]}
+        />
       </div>
 
       <div class="toolbar-actions">
@@ -374,11 +394,17 @@
           onclick={() => (showStats = !showStats)}
           title="Dashboard"
         >📊</button>
-        <select bind:value={resourceProfile} title="CPU usage" class="select-profile" disabled={scanning}>
-          <option value="low">🐢 Low</option>
-          <option value="normal">⚡ Normal</option>
-          <option value="max">🔥 Max</option>
-        </select>
+        <CustomSelect
+          bind:value={resourceProfile}
+          title="CPU usage"
+          class="select-profile"
+          disabled={scanning}
+          options={[
+            { value: 'low', label: '🐢 Low' },
+            { value: 'normal', label: '⚡ Normal' },
+            { value: 'max', label: '🔥 Max' },
+          ]}
+        />
         <button type="button" class="btn-scan" onclick={handleScan} disabled={scanning || libraries.length === 0}>
           {scanning ? $t('products.scanning') : $t('products.scanLibraries')}
         </button>

@@ -14,6 +14,7 @@
     quickMaintenanceScan,
     listDazLibraries,
   } from '$lib/api/commands';
+  import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
 
   // Props
   interface Props {
@@ -28,7 +29,7 @@
   let scanning = $state(false);
   let cleaning = $state(false);
   let libraries: DazLibrary[] = $state([]);
-  let selectedLibrary = $state<string | null>(null);
+  let selectedLibrary = $state<string>('');
   let summary: MaintenanceSummary | null = $state(null);
   let cleanupResult: CleanupResult | null = $state(null);
   let error = $state<string | null>(null);
@@ -226,14 +227,15 @@
     <section class="library-section">
       <label for="library-select">{$t('tools.maintenance.libraryToAnalyze')}</label>
       <div class="library-row">
-        <select id="library-select" bind:value={selectedLibrary} disabled={scanning || loading}>
-          <option value={null}>{$t('tools.maintenance.allLibraries')}</option>
-          {#each libraries as lib}
-            <option value={lib.path}>
-              {lib.name} {lib.isDefault ? $t('common.default') : ''}
-            </option>
-          {/each}
-        </select>
+        <CustomSelect
+          id="library-select"
+          bind:value={selectedLibrary}
+          disabled={scanning || loading}
+          options={[
+            { value: '', label: $t('tools.maintenance.allLibraries') },
+            ...libraries.map(lib => ({ value: lib.path, label: `${lib.name}${lib.isDefault ? ' ' + $t('common.default') : ''}` }))
+          ]}
+        />
       </div>
     </section>
 
