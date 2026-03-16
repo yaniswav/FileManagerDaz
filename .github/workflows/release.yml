@@ -16,50 +16,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      release_id: ${{ steps.create_release.outputs.id }}
-      release_upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: FileManagerDaz ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          body: |
-            ## FileManagerDaz ${{ github.ref_name }}
-
-            ### Downloads
-
-            | Platform | Download |
-            |----------|----------|
-            | Windows | `.msi` or `.exe` installer |
-            | macOS | `.dmg` disk image |
-            | Linux | `.AppImage` or `.deb` package |
-
-            ### Requirements
-
-            - **Windows**: Windows 10/11
-            - **macOS**: macOS 10.13+ (High Sierra or later)
-            - **Linux**: Ubuntu 18.04+ or equivalent
-            - **Optional**: WinRAR or `unrar` in PATH for RAR support
-
-            ### Changelog
-
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
-
   build-windows:
     name: Build Windows
-    needs: create-release
     runs-on: windows-latest
     permissions:
       contents: write
@@ -97,11 +55,34 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseName: 'FileManagerDaz ${{ github.ref_name }}'
+          releaseBody: |
+            ## FileManagerDaz ${{ github.ref_name }}
+
+            ### Downloads
+
+            | Platform | Download |
+            |----------|----------|
+            | Windows | `.msi` or `.exe` installer |
+            | macOS | `.dmg` disk image |
+            | Linux | `.AppImage` or `.deb` package |
+
+            ### Requirements
+
+            - **Windows**: Windows 10/11
+            - **macOS**: macOS 10.13+ (High Sierra or later)
+            - **Linux**: Ubuntu 18.04+ or equivalent
+            - **Optional**: WinRAR or `unrar` in PATH for RAR support
+
+            ### Changelog
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          releaseDraft: false
+          prerelease: false
 
   build-macos:
     name: Build macOS
-    needs: create-release
     runs-on: macos-latest
     permissions:
       contents: write
@@ -139,11 +120,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseName: 'FileManagerDaz ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false
 
   build-linux:
     name: Build Linux
-    needs: create-release
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -186,4 +169,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseName: 'FileManagerDaz ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false
