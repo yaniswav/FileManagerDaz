@@ -146,165 +146,58 @@ impl Database {
         })
     }
 
-    /// Migrates the schema if necessary
+    /// Migrates the schema if necessary.
+    /// All column additions run inside a single transaction (all-or-nothing).
     fn do_migrate(&self) -> AppResult<()> {
         self.with_connection(|conn| {
-            // Check if new columns exist
-            let mut columns: Vec<String> = conn
+            let columns: Vec<String> = conn
                 .prepare("PRAGMA table_info(products)")?
                 .query_map([], |row| row.get::<_, String>(1))?
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut refresh_columns = false;
 
-            // Add origin if missing
-            if !columns.iter().any(|c| c == "origin") {
-                warn!("Migrating database: adding origin column");
-                conn.execute(
-                    "ALTER TABLE products ADD COLUMN origin TEXT NOT NULL DEFAULT 'import'",
-                    [],
-                )?;
-                refresh_columns = true;
+            // Column migrations — iterated to avoid copy-paste
+            let column_migrations: &[(&str, &str)] = &[
+                ("origin",         "TEXT NOT NULL DEFAULT 'import'"),
+                ("library_path",   "TEXT"),
+                ("support_file",   "TEXT"),
+                ("product_token",  "TEXT"),
+                ("global_id",      "TEXT"),
+                ("vendor",         "TEXT"),
+                ("import_task_id", "TEXT"),
+                ("content_type",   "TEXT"),
+                ("categories",     "TEXT DEFAULT '[]'"),
+                ("thumbnail_path", "TEXT"),
+                ("notes",          "TEXT"),
+            ];
+
+            let pending: Vec<_> = column_migrations
+                .iter()
+                .filter(|(col, _)| !columns.iter().any(|c| c == col))
+                .collect();
+
+            if !pending.is_empty() {
+                // Wrap all ALTER TABLEs in a transaction — prevents partial migration
+                let tx = conn.unchecked_transaction()?;
+                for (col, def) in &pending {
+                    warn!("Migrating: adding column {col}");
+                    tx.execute(
+                        &format!("ALTER TABLE products ADD COLUMN {col} {def}"),
+                        [],
+                    )?;
+                }
+                tx.commit()?;
             }
 
-            // Add library_path if missing
-            if !columns.iter().any(|c| c == "library_path") {
-                warn!("Migrating database: adding library_path column");
-                conn.execute("ALTER TABLE products ADD COLUMN library_path TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add support_file if missing
-            if !columns.iter().any(|c| c == "support_file") {
-                warn!("Migrating database: adding support_file column");
-                conn.execute("ALTER TABLE products ADD COLUMN support_file TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add product_token if missing
-            if !columns.iter().any(|c| c == "product_token") {
-                warn!("Migrating database: adding product_token column");
-                conn.execute("ALTER TABLE products ADD COLUMN product_token TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add global_id if missing
-            if !columns.iter().any(|c| c == "global_id") {
-                warn!("Migrating database: adding global_id column");
-                conn.execute("ALTER TABLE products ADD COLUMN global_id TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add vendor if missing
-            if !columns.iter().any(|c| c == "vendor") {
-                warn!("Migrating database: adding vendor column");
-                conn.execute("ALTER TABLE products ADD COLUMN vendor TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add import_task_id if missing
-            if !columns.iter().any(|c| c == "import_task_id") {
-                warn!("Migrating database: adding import_task_id column");
-                conn.execute("ALTER TABLE products ADD COLUMN import_task_id TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add content_type if missing
-            if !columns.iter().any(|c| c == "content_type") {
-                warn!("Migrating database: adding content_type column");
-                conn.execute("ALTER TABLE products ADD COLUMN content_type TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add categories if missing
-            if !columns.iter().any(|c| c == "categories") {
-                warn!("Migrating database: adding categories column");
-                conn.execute(
-                    "ALTER TABLE products ADD COLUMN categories TEXT DEFAULT '[]'",
-                    [],
-                )?;
-                refresh_columns = true;
-            }
-
-            // Add thumbnail_path if missing
-            if !columns.iter().any(|c| c == "thumbnail_path") {
-                warn!("Migrating database: adding thumbnail_path column");
-                conn.execute("ALTER TABLE products ADD COLUMN thumbnail_path TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            // Add notes if missing
-            if !columns.iter().any(|c| c == "notes") {
-                warn!("Migrating database: adding notes column");
-                conn.execute("ALTER TABLE products ADD COLUMN notes TEXT", [])?;
-                refresh_columns = true;
-            }
-
-            if refresh_columns {
-                columns = conn
-                    .prepare("PRAGMA table_info(products)")?
-                    .query_map([], |row| row.get::<_, String>(1))?
-                    .collect::<Result<Vec<_>, _>>()?;
-            }
-
-            // Create index on content_type
-            if columns.iter().any(|c| c == "content_type") {
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_products_content_type ON products(content_type)",
-                    [],
-                )?;
-            }
-
-            // Create index on origin
-            if columns.iter().any(|c| c == "origin") {
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_products_origin ON products(origin)",
-                    [],
-                )?;
-            }
-
-            // Create index on library_path
-            if columns.iter().any(|c| c == "library_path") {
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_products_library_path ON products(library_path)",
-                    [],
-                )?;
-            }
-
-            // Create index on support_file
-            if columns.iter().any(|c| c == "support_file") {
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_products_support_file ON products(support_file)",
-                    [],
-                )?;
-            }
-
-            // Create unique index for idempotent inserts from import tasks
-            if columns.iter().any(|c| c == "import_task_id") {
-                conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_import_task_id ON products(import_task_id)",
-                    [],
-                )?;
-            } else {
-                warn!("Skipping import_task_id index (column missing after migration)");
-            }
-
-            // Create unique index for library products (one entry per library + support file)
-            if columns.iter().any(|c| c == "library_path") && columns.iter().any(|c| c == "support_file") {
-                conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_library_support ON products(library_path, support_file)",
-                    [],
-                )?;
-            } else {
-                warn!("Skipping library_support index (columns missing after migration)");
-            }
-
-            // Create index on vendor for fast filtering
-            if columns.iter().any(|c| c == "vendor") {
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor)",
-                    [],
-                )?;
-            }
+            // Indexes — idempotent (CREATE IF NOT EXISTS), safe outside transaction
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_products_content_type ON products(content_type);
+                 CREATE INDEX IF NOT EXISTS idx_products_origin ON products(origin);
+                 CREATE INDEX IF NOT EXISTS idx_products_library_path ON products(library_path);
+                 CREATE INDEX IF NOT EXISTS idx_products_support_file ON products(support_file);
+                 CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor);
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_import_task_id ON products(import_task_id);
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_library_support ON products(library_path, support_file);",
+            )?;
 
             debug!("Database migration completed");
             Ok(())
@@ -407,7 +300,6 @@ impl Database {
         }
         self.with_connection(|conn| {
             let tx = conn.unchecked_transaction()?;
-            let mut updated = 0usize;
 
             // Pre-clean input tags
             let clean_tags: Vec<String> = tags
@@ -416,49 +308,68 @@ impl Database {
                 .filter(|t| !t.is_empty())
                 .collect();
 
-            for &id in ids {
-                let new_tags = match mode {
-                    "replace" => {
-                        // Simply overwrite
-                        clean_tags.join(",")
+            let updated = match mode {
+                "replace" => {
+                    // All products get the same value — single UPDATE with IN clause
+                    let new_tags = clean_tags.join(",");
+                    let placeholders: Vec<String> = (0..ids.len())
+                        .map(|i| format!("?{}", i + 2))
+                        .collect();
+                    let sql = format!(
+                        "UPDATE products SET tags = ?1 WHERE id IN ({})",
+                        placeholders.join(", ")
+                    );
+                    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                        vec![Box::new(new_tags)];
+                    for &id in ids {
+                        params.push(Box::new(id));
                     }
-                    "remove" => {
-                        let current: String = tx
-                            .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
-                            .unwrap_or_default();
-                        let remove_lower: Vec<String> = clean_tags.iter().map(|t| t.to_lowercase()).collect();
-                        current
-                            .split(',')
-                            .map(|t| t.trim().to_string())
-                            .filter(|t| !t.is_empty() && !remove_lower.contains(&t.to_lowercase()))
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    }
-                    _ => {
-                        // "add" — merge without duplicates
-                        let current: String = tx
-                            .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
-                            .unwrap_or_default();
-                        let mut tag_set: Vec<String> = current
-                            .split(',')
-                            .map(|t| t.trim().to_string())
-                            .filter(|t| !t.is_empty())
-                            .collect();
-                        for tag in &clean_tags {
-                            if !tag_set.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
-                                tag_set.push(tag.clone());
+                    tx.execute(
+                        &sql,
+                        rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                    )?
+                }
+                _ => {
+                    // "add" or "remove" — need per-product SELECT + UPDATE
+                    let mut count = 0usize;
+                    for &id in ids {
+                        let new_tags = if mode == "remove" {
+                            let current: String = tx
+                                .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
+                                .unwrap_or_default();
+                            let remove_lower: Vec<String> = clean_tags.iter().map(|t| t.to_lowercase()).collect();
+                            current
+                                .split(',')
+                                .map(|t| t.trim().to_string())
+                                .filter(|t| !t.is_empty() && !remove_lower.contains(&t.to_lowercase()))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        } else {
+                            // "add" — merge without duplicates
+                            let current: String = tx
+                                .query_row("SELECT COALESCE(tags, '') FROM products WHERE id = ?1", [id], |r| r.get(0))
+                                .unwrap_or_default();
+                            let mut tag_set: Vec<String> = current
+                                .split(',')
+                                .map(|t| t.trim().to_string())
+                                .filter(|t| !t.is_empty())
+                                .collect();
+                            for tag in &clean_tags {
+                                if !tag_set.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                                    tag_set.push(tag.clone());
+                                }
                             }
-                        }
-                        tag_set.join(",")
-                    }
-                };
+                            tag_set.join(",")
+                        };
 
-                let rows = tx.execute(
-                    "UPDATE products SET tags = ?1 WHERE id = ?2",
-                    rusqlite::params![new_tags, id],
-                )?;
-                updated += rows;
-            }
+                        count += tx.execute(
+                            "UPDATE products SET tags = ?1 WHERE id = ?2",
+                            rusqlite::params![new_tags, id],
+                        )?;
+                    }
+                    count
+                }
+            };
 
             tx.commit()?;
             info!("batch_update_tags: {} products updated (mode={}, {} tags)", updated, mode, clean_tags.len());

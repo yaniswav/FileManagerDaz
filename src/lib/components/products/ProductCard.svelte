@@ -3,7 +3,7 @@
   import { formatFileSize, parseTags, type Product } from '$lib/api/commands';
   import { open } from '@tauri-apps/plugin-shell';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { getContentTypeIcon, normalizeContentType } from './utils';
+  import { getContentTypeIcon, getContentTypeLabel, normalizeContentType } from './utils';
 
   interface Props {
     product: Product;
@@ -20,14 +20,6 @@
 
   let showMenu = $state(false);
   let imgFailed = $state(false);
-
-  function getContentTypeLabel(type: string | null): string {
-    const normalized = normalizeContentType(type);
-    if (!normalized) return $t('common.unknown');
-    const key = `products.contentTypes.${normalized}`;
-    const translated = $t(key);
-    return translated !== key ? translated : normalized;
-  }
 
   let thumbnailSrc = $derived.by(() => {
     const raw = product.thumbnailPath;
@@ -132,7 +124,7 @@
     <!-- Overlay badges -->
     <div class="badges-overlay">
       {#if product.contentType}
-        <span class="badge type-badge">{getContentTypeLabel(product.contentType)}</span>
+        <span class="badge type-badge">{getContentTypeLabel(product.contentType, $t)}</span>
       {/if}
       {#if libraryName}
         <span class="badge lib-badge">{libraryName}</span>
@@ -145,6 +137,7 @@
         type="button"
         class="menu-btn"
         title="Actions"
+        aria-label="Actions"
         onclick={handleMenuToggle}
       >⋯</button>
 

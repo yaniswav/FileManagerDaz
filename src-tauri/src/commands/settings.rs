@@ -1,9 +1,10 @@
 //! Tauri commands for settings and DAZ libraries management
 
-use crate::config::SETTINGS;
+use crate::config::SettingsState;
 use crate::error::{ApiResponse, AppError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::State;
 use tracing::{error, info, warn};
 
 // ============================================================================
@@ -64,10 +65,10 @@ pub struct DetectionResult {
 
 /// Gets the complete configuration
 #[tauri::command]
-pub fn get_app_config() -> ApiResponse<AppConfig> {
+pub fn get_app_config(settings: State<'_, SettingsState>) -> ApiResponse<AppConfig> {
     info!("get_app_config");
 
-    match SETTINGS.read() {
+    match settings.read() {
         Ok(settings) => {
             let libraries: Vec<DazLibrary> = settings
                 .daz_libraries
@@ -131,10 +132,10 @@ pub fn get_app_config() -> ApiResponse<AppConfig> {
 
 /// Lists configured DAZ libraries
 #[tauri::command]
-pub fn list_daz_libraries() -> ApiResponse<Vec<DazLibrary>> {
+pub fn list_daz_libraries(settings: State<'_, SettingsState>) -> ApiResponse<Vec<DazLibrary>> {
     info!("list_daz_libraries");
 
-    match SETTINGS.read() {
+    match settings.read() {
         Ok(settings) => {
             let libraries: Vec<DazLibrary> = settings
                 .daz_libraries
@@ -165,15 +166,15 @@ pub fn list_daz_libraries() -> ApiResponse<Vec<DazLibrary>> {
 
 /// Automatically detects DAZ libraries (Windows registry + default paths)
 #[tauri::command]
-pub fn detect_daz_libraries() -> ApiResponse<DetectionResult> {
+pub fn detect_daz_libraries(settings: State<'_, SettingsState>) -> ApiResponse<DetectionResult> {
     info!("detect_daz_libraries");
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             let before_count = settings.daz_libraries.len();
 
             // Merge: detect new libraries without losing manually-added ones
-            let existing: std::collections::HashSet<PathBuf> =
+            let _existing: std::collections::HashSet<PathBuf> =
                 settings.daz_libraries.iter().cloned().collect();
             settings.detect_daz_libraries();
             // detect_daz_libraries pushes to the vec, so deduplicate
@@ -220,7 +221,7 @@ pub fn detect_daz_libraries() -> ApiResponse<DetectionResult> {
 
 /// Manually adds a DAZ library
 #[tauri::command]
-pub fn add_daz_library(path: String) -> ApiResponse<DazLibrary> {
+pub fn add_daz_library(path: String, settings: State<'_, SettingsState>) -> ApiResponse<DazLibrary> {
     info!("add_daz_library: {}", path);
 
     let lib_path = PathBuf::from(&path);
@@ -233,7 +234,7 @@ pub fn add_daz_library(path: String) -> ApiResponse<DazLibrary> {
         return ApiResponse::error(AppError::InvalidPath("Path must be a folder".to_string()));
     }
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             // Check if already present
             if settings.daz_libraries.contains(&lib_path) {
@@ -278,12 +279,12 @@ pub fn add_daz_library(path: String) -> ApiResponse<DazLibrary> {
 
 /// Removes a DAZ library
 #[tauri::command]
-pub fn remove_daz_library(path: String) -> ApiResponse<bool> {
+pub fn remove_daz_library(path: String, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("remove_daz_library: {}", path);
 
     let lib_path = PathBuf::from(&path);
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             let initial_len = settings.daz_libraries.len();
             settings.daz_libraries.retain(|p| p != &lib_path);
@@ -313,12 +314,12 @@ pub fn remove_daz_library(path: String) -> ApiResponse<bool> {
 
 /// Sets the default library
 #[tauri::command]
-pub fn set_default_library(path: String) -> ApiResponse<bool> {
+pub fn set_default_library(path: String, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_default_library: {}", path);
 
     let lib_path = PathBuf::from(&path);
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             if !settings.daz_libraries.contains(&lib_path) {
                 return ApiResponse::error(AppError::NotFound(lib_path));
@@ -341,7 +342,7 @@ pub fn set_default_library(path: String) -> ApiResponse<bool> {
 
 /// Updates the temporary folder path
 #[tauri::command]
-pub fn set_temp_dir(path: String) -> ApiResponse<bool> {
+pub fn set_temp_dir(path: String, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_temp_dir: {}", path);
 
     let dir_path = PathBuf::from(&path);
@@ -353,7 +354,7 @@ pub fn set_temp_dir(path: String) -> ApiResponse<bool> {
         }
     }
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.temp_dir = dir_path;
 
@@ -372,10 +373,10 @@ pub fn set_temp_dir(path: String) -> ApiResponse<bool> {
 
 /// Sets whether archives should be moved to trash after a successful import
 #[tauri::command]
-pub fn set_trash_archives_after_import(enabled: bool) -> ApiResponse<bool> {
+pub fn set_trash_archives_after_import(enabled: bool, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_trash_archives_after_import: {}", enabled);
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.trash_archives_after_import = enabled;
 
@@ -394,10 +395,10 @@ pub fn set_trash_archives_after_import(enabled: bool) -> ApiResponse<bool> {
 
 /// Enables/disables extraction timing logs (developer option)
 #[tauri::command]
-pub fn set_dev_log_extraction_timings(enabled: bool) -> ApiResponse<bool> {
+pub fn set_dev_log_extraction_timings(enabled: bool, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_dev_log_extraction_timings: {}", enabled);
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.dev_log_extraction_timings = enabled;
 
@@ -416,10 +417,10 @@ pub fn set_dev_log_extraction_timings(enabled: bool) -> ApiResponse<bool> {
 
 /// Enables/disables extraction move detail logs (developer option)
 #[tauri::command]
-pub fn set_dev_log_extraction_details(enabled: bool) -> ApiResponse<bool> {
+pub fn set_dev_log_extraction_details(enabled: bool, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_dev_log_extraction_details: {}", enabled);
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.dev_log_extraction_details = enabled;
 
@@ -438,32 +439,29 @@ pub fn set_dev_log_extraction_details(enabled: bool) -> ApiResponse<bool> {
 
 /// Re-detect external tools (UnRAR, 7-Zip)
 #[tauri::command]
-pub fn detect_external_tools() -> ApiResponse<AppConfig> {
+pub fn detect_external_tools(settings: State<'_, SettingsState>) -> ApiResponse<AppConfig> {
     info!("detect_external_tools");
 
-    match SETTINGS.write() {
-        Ok(mut settings) => {
-            settings.detect_external_tools();
+    match settings.write() {
+        Ok(mut s) => {
+            s.detect_external_tools();
 
-            if let Err(e) = settings.save() {
+            if let Err(e) = s.save() {
                 warn!("Failed to save settings: {}", e);
             }
-
-            drop(settings);
-
-            // Return updated config
-            get_app_config()
         }
         Err(e) => {
             error!("Failed to write settings: {}", e);
-            ApiResponse::error(AppError::Config(format!("Failed to detect tools: {}", e)))
+            return ApiResponse::error(AppError::Config(format!("Failed to detect tools: {}", e)));
         }
     }
+    // Re-read after write guard is dropped
+    get_app_config(settings)
 }
 
 /// Set the UI language ("fr" or "en")
 #[tauri::command]
-pub fn set_language(language: String) -> ApiResponse<String> {
+pub fn set_language(language: String, settings: State<'_, SettingsState>) -> ApiResponse<String> {
     info!("set_language: {}", language);
 
     // Validate language
@@ -474,7 +472,7 @@ pub fn set_language(language: String) -> ApiResponse<String> {
         )));
     }
 
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.language = language.clone();
 
@@ -496,9 +494,9 @@ pub fn set_language(language: String) -> ApiResponse<String> {
 // ============================================================================
 
 #[tauri::command]
-pub fn set_minimize_to_tray(enabled: bool) -> ApiResponse<bool> {
+pub fn set_minimize_to_tray(enabled: bool, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_minimize_to_tray: {}", enabled);
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.minimize_to_tray = enabled;
             if let Err(e) = settings.save() {
@@ -514,9 +512,9 @@ pub fn set_minimize_to_tray(enabled: bool) -> ApiResponse<bool> {
 }
 
 #[tauri::command]
-pub fn set_auto_import_enabled(enabled: bool) -> ApiResponse<bool> {
+pub fn set_auto_import_enabled(enabled: bool, settings: State<'_, SettingsState>) -> ApiResponse<bool> {
     info!("set_auto_import_enabled: {}", enabled);
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.auto_import_enabled = enabled;
             if let Err(e) = settings.save() {
@@ -532,9 +530,9 @@ pub fn set_auto_import_enabled(enabled: bool) -> ApiResponse<bool> {
 }
 
 #[tauri::command]
-pub fn set_auto_import_folder(path: Option<String>) -> ApiResponse<Option<String>> {
+pub fn set_auto_import_folder(path: Option<String>, settings: State<'_, SettingsState>) -> ApiResponse<Option<String>> {
     info!("set_auto_import_folder: {:?}", path);
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.auto_import_folder = path.as_ref().map(std::path::PathBuf::from);
             if let Err(e) = settings.save() {
@@ -550,7 +548,7 @@ pub fn set_auto_import_folder(path: Option<String>) -> ApiResponse<Option<String
 }
 
 #[tauri::command]
-pub fn set_auto_import_mode(mode: String) -> ApiResponse<String> {
+pub fn set_auto_import_mode(mode: String, settings: State<'_, SettingsState>) -> ApiResponse<String> {
     info!("set_auto_import_mode: {}", mode);
     let valid = matches!(mode.as_str(), "watch_only" | "confirm" | "auto");
     if !valid {
@@ -559,7 +557,7 @@ pub fn set_auto_import_mode(mode: String) -> ApiResponse<String> {
             mode
         )));
     }
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             settings.auto_import_mode = mode.clone();
             if let Err(e) = settings.save() {
@@ -578,13 +576,13 @@ pub fn set_auto_import_mode(mode: String) -> ApiResponse<String> {
 }
 
 #[tauri::command]
-pub fn set_close_action(action: String) -> ApiResponse<String> {
+pub fn set_close_action(action: String, settings: State<'_, SettingsState>) -> ApiResponse<String> {
     info!("set_close_action: {}", action);
     let valid = matches!(action.as_str(), "ask" | "minimize" | "quit");
     if !valid {
         return ApiResponse::error(AppError::Config(format!("Invalid close action: {}", action)));
     }
-    match SETTINGS.write() {
+    match settings.write() {
         Ok(mut settings) => {
             // Keep minimize_to_tray in sync for backward compatibility
             settings.minimize_to_tray = action == "minimize";

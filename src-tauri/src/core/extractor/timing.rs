@@ -4,7 +4,6 @@
 //! - `ExtractionTimingSession`: records durations of different steps
 //! - Optional writing to a dedicated log file (developer mode)
 
-use crate::config::SETTINGS;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
@@ -68,13 +67,23 @@ pub struct ExtractionTimingSession {
     steps: Vec<TimingStep>,
     current_step: Option<(String, Instant)>,
     stats: Option<ExtractionStats>,
+    /// Whether to log timing reports to file
+    log_to_file: bool,
+    /// Path to the timing log file (if logging is enabled)
+    log_path: Option<PathBuf>,
 }
 
 impl ExtractionTimingSession {
     /// Creates a new timing session
-    pub fn new(source: &str) -> Self {
+    pub fn new(source: &str, dev_log_extraction_timings: bool, app_data_dir: &std::path::Path) -> Self {
         let now = Instant::now();
         info!("[TIMING] Starting extraction session for: {}", source);
+
+        let log_path = if dev_log_extraction_timings {
+            Some(app_data_dir.join("logs").join("extraction-timings.log"))
+        } else {
+            None
+        };
 
         Self {
             source: source.to_string(),
@@ -83,6 +92,8 @@ impl ExtractionTimingSession {
             steps: Vec::new(),
             current_step: None,
             stats: None,
+            log_to_file: dev_log_extraction_timings,
+            log_path,
         }
     }
 
@@ -174,9 +185,11 @@ impl ExtractionTimingSession {
         }
 
         // Write to log file if dev mode is enabled
-        if should_log_to_file() {
-            if let Err(e) = write_report_to_file(&report) {
-                warn!("[TIMING] Failed to write timing report to file: {}", e);
+        if self.log_to_file {
+            if let Some(ref log_path) = self.log_path {
+                if let Err(e) = write_report_to_file(&report, log_path) {
+                    warn!("[TIMING] Failed to write timing report to file: {}", e);
+                }
             }
         }
 
@@ -188,28 +201,8 @@ impl ExtractionTimingSession {
 // Utility functions
 // ============================================================================
 
-/// Checks if timings should be logged to a file
-fn should_log_to_file() -> bool {
-    SETTINGS
-        .read()
-        .map(|s| s.dev_log_extraction_timings)
-        .unwrap_or(false)
-}
-
-/// Returns the path to the timing log file
-fn get_timing_log_path() -> Option<PathBuf> {
-    SETTINGS
-        .read()
-        .ok()
-        .map(|s| s.app_data_dir.join("logs").join("extraction-timings.log"))
-}
-
 /// Writes the report to the log file
-fn write_report_to_file(report: &TimingReport) -> std::io::Result<()> {
-    let log_path = match get_timing_log_path() {
-        Some(p) => p,
-        None => return Ok(()),
-    };
+fn write_report_to_file(report: &TimingReport, log_path: &std::path::Path) -> std::io::Result<()> {
 
     // Create logs folder if necessary
     if let Some(parent) = log_path.parent() {
@@ -262,7 +255,8 @@ mod tests {
 
     #[test]
     fn test_timing_session() {
-        let mut session = ExtractionTimingSession::new("test_archive.zip");
+        let temp = std::env::temp_dir().join("fmd_timing_test");
+        let mut session = ExtractionTimingSession::new("test_archive.zip", false, &temp);
 
         session.start_step("extract");
         thread::sleep(Duration::from_millis(10));

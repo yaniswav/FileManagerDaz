@@ -3,7 +3,7 @@
 //! Handles extraction of archives containing other archives,
 //! with support for step notifications via callback.
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::core::analyzer::{analyze_content, AnalysisSummary};
 use crate::error::{AppError, AppResult};
 use rayon::prelude::*;
@@ -22,9 +22,6 @@ use super::utils::{
 };
 use super::{process_source, ArchiveFormat};
 use walkdir::WalkDir;
-
-#[cfg(test)]
-use once_cell::sync::Lazy;
 
 // ============================================================================
 // Types
@@ -79,6 +76,7 @@ pub struct RecursiveExtractResult {
 pub fn process_source_recursive(
     path: &Path,
     max_depth: usize,
+    settings: &AppSettings,
 ) -> AppResult<RecursiveExtractResult> {
     info!(
         "Processing source recursively: {:?} (max_depth: {})",
@@ -89,7 +87,7 @@ pub fn process_source_recursive(
     let source_archive_paths = collect_source_archives(path);
 
     // First extraction (in temp folder)
-    let initial_result = process_source(path)?;
+    let initial_result = process_source(path, settings)?;
 
     let mut nested_archives = Vec::new();
     let mut max_depth_reached = 0;
@@ -101,6 +99,7 @@ pub fn process_source_recursive(
         max_depth,
         &mut nested_archives,
         &mut max_depth_reached,
+        settings,
     )?;
 
     // Re-analyze final content
@@ -114,7 +113,7 @@ pub fn process_source_recursive(
     );
 
     // Move to default library if configured
-    let (final_destination, moved_to_library) = move_to_default_library(&temp_destination, path)?;
+    let (final_destination, moved_to_library) = move_to_default_library(&temp_destination, path, settings)?;
 
     Ok(RecursiveExtractResult {
         source_path: path.to_path_buf(),
@@ -137,6 +136,7 @@ pub fn process_source_recursive(
 pub fn process_source_recursive_with_events<F>(
     path: &Path,
     max_depth: usize,
+    settings: &AppSettings,
     emit_step: F,
 ) -> AppResult<RecursiveExtractResult>
 where
@@ -148,7 +148,11 @@ where
     );
 
     // Create the timing session
-    let mut timing = ExtractionTimingSession::new(&path.to_string_lossy());
+    let mut timing = ExtractionTimingSession::new(
+        &path.to_string_lossy(),
+        settings.dev_log_extraction_timings,
+        &settings.app_data_dir,
+    );
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
 
@@ -173,7 +177,7 @@ where
     // Step 2: Main extraction
     emit_step(&format!("Extracting {}...", format_name), None);
     timing.start_step("initial_extraction");
-    let initial_result = match process_source(path) {
+    let initial_result = match process_source(path, settings) {
         Ok(r) => {
             timing.end_step();
             r
@@ -207,6 +211,7 @@ where
         max_depth,
         &mut nested_archives,
         &mut max_depth_reached,
+        settings,
         emit_step.clone(),
     ) {
         Ok(d) => {
@@ -256,7 +261,7 @@ where
     // Step 7: Move to library
     emit_step("Moving to library...", None);
     timing.start_step("move_to_library");
-    let (final_destination, moved_to_library) = move_to_default_library(&temp_destination, path)?;
+    let (final_destination, moved_to_library) = move_to_default_library(&temp_destination, path, settings)?;
     timing.end_step();
 
     if moved_to_library {
@@ -357,11 +362,7 @@ fn copy_with_large_buffer(src: &Path, dst: &Path) -> AppResult<u64> {
 }
 
 /// Moves extracted content to the default DAZ library using intelligent anchor detection
-fn move_to_default_library(temp_dir: &Path, source_path: &Path) -> AppResult<(PathBuf, bool)> {
-    let settings = SETTINGS
-        .read()
-        .map_err(|e| AppError::Config(format!("Cannot read settings: {}", e)))?;
-
+fn move_to_default_library(temp_dir: &Path, source_path: &Path, settings: &AppSettings) -> AppResult<(PathBuf, bool)> {
     // Check if a default destination is configured
     let default_dest = match &settings.default_destination {
         Some(dest) if dest.exists() => dest.clone(),
@@ -371,10 +372,12 @@ fn move_to_default_library(temp_dir: &Path, source_path: &Path) -> AppResult<(Pa
         }
     };
 
-    drop(settings); // Release lock before long operations
-
     let session_id = build_session_id(source_path);
-    let mut move_logger = MoveLogger::new(session_id);
+    let mut move_logger = MoveLogger::new(
+        session_id,
+        settings.dev_log_extraction_details,
+        &settings.app_data_dir,
+    );
     let mut move_counts = MoveLogCounts::default();
     let mut moved_roots: Vec<PathBuf> = Vec::new();
 
@@ -883,6 +886,7 @@ fn extract_nested_archives(
     max_depth: usize,
     nested_archives: &mut Vec<NestedArchiveInfo>,
     max_depth_reached: &mut usize,
+    settings: &AppSettings,
 ) -> AppResult<PathBuf> {
     use std::collections::VecDeque;
 
@@ -918,6 +922,7 @@ fn extract_nested_archives(
             current_depth,
             nested_archives,
             max_depth_reached,
+            settings,
         )?;
 
         // Add new archives to the queue
@@ -937,6 +942,7 @@ fn extract_nested_archives_with_events<F>(
     max_depth: usize,
     nested_archives: &mut Vec<NestedArchiveInfo>,
     max_depth_reached: &mut usize,
+    settings: &AppSettings,
     emit_step: F,
 ) -> AppResult<PathBuf>
 where
@@ -1001,7 +1007,7 @@ where
             let extract_dir = dir.join(format!("{}_extracted", archive_stem));
 
             // Extract the archive
-            match extract_archive_by_format(archive_path, &extract_dir, format) {
+            match extract_archive_by_format(archive_path, &extract_dir, format, settings) {
                 Ok(_) => {
                     // Normalize DAZ structure (remove wrappers like "Content")
                     if let Ok(normalized) = super::utils::normalize_daz_structure(&extract_dir) {
@@ -1116,6 +1122,7 @@ fn extract_single_nested_archive_queued(
     current_depth: usize,
     nested_archives: &mut Vec<NestedArchiveInfo>,
     max_depth_reached: &mut usize,
+    settings: &AppSettings,
 ) -> AppResult<Vec<PathBuf>> {
     let format = match ArchiveFormat::from_extension(archive_path) {
         Some(f) => f,
@@ -1123,7 +1130,7 @@ fn extract_single_nested_archive_queued(
     };
 
     // Check that the format is supported
-    if !super::is_format_supported(format) {
+    if !super::is_format_supported(format, settings) {
         warn!("Skipping unsupported format: {:?}", archive_path);
         return Ok(Vec::new());
     }
@@ -1144,7 +1151,7 @@ fn extract_single_nested_archive_queued(
         archive_path, extract_dest
     );
 
-    let extract_stats = extract_archive_by_format(archive_path, &extract_dest, format)?;
+    let extract_stats = extract_archive_by_format(archive_path, &extract_dest, format, settings)?;
 
     *max_depth_reached = (*max_depth_reached).max(current_depth);
 
@@ -1214,6 +1221,7 @@ fn extract_single_nested_archive(
     max_depth: usize,
     nested_archives: &mut Vec<NestedArchiveInfo>,
     max_depth_reached: &mut usize,
+    settings: &AppSettings,
 ) -> AppResult<()> {
     let format = match ArchiveFormat::from_extension(archive_path) {
         Some(f) => f,
@@ -1221,7 +1229,7 @@ fn extract_single_nested_archive(
     };
 
     // Check that the format is supported
-    if !super::is_format_supported(format) {
+    if !super::is_format_supported(format, settings) {
         warn!("Skipping unsupported format: {:?}", archive_path);
         return Ok(());
     }
@@ -1242,7 +1250,7 @@ fn extract_single_nested_archive(
         archive_path, extract_dest
     );
 
-    let extract_stats = extract_archive_by_format(archive_path, &extract_dest, format)?;
+    let extract_stats = extract_archive_by_format(archive_path, &extract_dest, format, settings)?;
 
     // Record nested archive info
     nested_archives.push(NestedArchiveInfo {
@@ -1272,6 +1280,7 @@ fn extract_single_nested_archive(
         max_depth,
         nested_archives,
         max_depth_reached,
+        settings,
     )?;
 
     Ok(())
@@ -1286,6 +1295,7 @@ pub fn extract_archive_by_format(
     archive_path: &Path,
     dest_dir: &Path,
     format: ArchiveFormat,
+    settings: &AppSettings,
 ) -> AppResult<ContentStats> {
     use super::multipart;
 
@@ -1303,12 +1313,12 @@ pub fn extract_archive_by_format(
         }
         // RAR multi-part: unrar handles it natively
         (Some(info), ArchiveFormat::Rar) => {
-            super::rar::extract_rar(&info.first_part, dest_dir)
+            super::rar::extract_rar(&info.first_part, dest_dir, settings)
         }
         // Regular archives
         (_, ArchiveFormat::Zip) => super::zip::extract_zip(archive_path, dest_dir),
         (_, ArchiveFormat::SevenZip) => super::seven_zip::extract_7z(archive_path, dest_dir),
-        (_, ArchiveFormat::Rar) => super::rar::extract_rar(archive_path, dest_dir),
+        (_, ArchiveFormat::Rar) => super::rar::extract_rar(archive_path, dest_dir, settings),
     }
 }
 
@@ -1320,13 +1330,8 @@ pub fn extract_archive_by_format(
 mod tests {
     use super::*;
     use crate::config::settings::AppSettings;
-    use crate::config::SETTINGS;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Serialize SETTINGS mutations across tests to avoid interleaving
-    static TEST_SETTINGS_MUTEX: Lazy<std::sync::Mutex<()>> =
-        Lazy::new(|| std::sync::Mutex::new(()));
 
     fn unique_path(name: &str) -> PathBuf {
         let ts = SystemTime::now()
@@ -1336,25 +1341,14 @@ mod tests {
         std::env::temp_dir().join(format!("fmd_test_{}_{}", name, ts))
     }
 
-    fn with_default_library(lib_path: &Path) -> AppSettings {
-        let original = SETTINGS.read().unwrap().clone();
-        {
-            let mut settings = SETTINGS.write().unwrap();
-            settings.default_destination = Some(lib_path.to_path_buf());
-        }
-        original
-    }
-
-    fn restore_settings(original: AppSettings) {
-        if let Ok(mut settings) = SETTINGS.write() {
-            *settings = original;
-        }
+    fn test_settings_with_library(lib_path: &Path) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.default_destination = Some(lib_path.to_path_buf());
+        settings
     }
 
     #[test]
     fn anchor_root_file_stays_under_anchor() -> AppResult<()> {
-        let _guard = TEST_SETTINGS_MUTEX.lock().unwrap();
-
         let base = unique_path("anchor_root");
         let extraction = base.join("extract");
         let lib = base.join("lib");
@@ -1363,9 +1357,8 @@ mod tests {
         fs::create_dir_all(extraction.join("data"))?;
         fs::write(extraction.join("data").join("MonFichier.duf"), b"dummy")?;
 
-        let original = with_default_library(&lib);
-        let result = move_to_default_library(&extraction, &extraction)?;
-        restore_settings(original);
+        let settings = test_settings_with_library(&lib);
+        let result = move_to_default_library(&extraction, &extraction, &settings)?;
 
         assert!(result.1, "content should be moved to library");
         assert!(lib.join("data").join("MonFichier.duf").exists());
@@ -1377,8 +1370,6 @@ mod tests {
 
     #[test]
     fn anchor_subfolder_keeps_relative_path() -> AppResult<()> {
-        let _guard = TEST_SETTINGS_MUTEX.lock().unwrap();
-
         let base = unique_path("anchor_subfolder");
         let extraction = base.join("extract");
         let lib = base.join("lib");
@@ -1390,9 +1381,8 @@ mod tests {
             b"dummy",
         )?;
 
-        let original = with_default_library(&lib);
-        let result = move_to_default_library(&extraction, &extraction)?;
-        restore_settings(original);
+        let settings = test_settings_with_library(&lib);
+        let result = move_to_default_library(&extraction, &extraction, &settings)?;
 
         assert!(result.1);
         assert!(lib.join("People").join("Char").join("Bar.duf").exists());
@@ -1404,8 +1394,6 @@ mod tests {
 
     #[test]
     fn loose_file_goes_to_content_folder() -> AppResult<()> {
-        let _guard = TEST_SETTINGS_MUTEX.lock().unwrap();
-
         let base = unique_path("loose_file");
         let extraction = base.join("extract");
         let lib = base.join("lib");
@@ -1414,9 +1402,8 @@ mod tests {
         fs::create_dir_all(&extraction)?;
         fs::write(extraction.join("Loose.duf"), b"dummy")?;
 
-        let original = with_default_library(&lib);
-        let result = move_to_default_library(&extraction, &extraction)?;
-        restore_settings(original);
+        let settings = test_settings_with_library(&lib);
+        let result = move_to_default_library(&extraction, &extraction, &settings)?;
 
         assert!(result.1);
         assert!(lib.join("Content").join("Loose.duf").exists());

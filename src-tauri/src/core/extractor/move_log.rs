@@ -2,12 +2,10 @@
 //!
 //! Writes JSON lines describing file moves, skips, and summaries when enabled.
 
-use crate::config::SETTINGS;
 use chrono::Utc;
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
 use tracing::warn;
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -80,12 +78,16 @@ pub struct MoveLogger {
 }
 
 impl MoveLogger {
-    pub fn new(session_id: String) -> Option<Self> {
-        if !should_log_to_file() {
+    /// Creates a new move logger.
+    ///
+    /// `dev_log_extraction_details` controls whether logging is enabled.
+    /// `app_data_dir` is used to determine the log file path.
+    pub fn new(session_id: String, dev_log_extraction_details: bool, app_data_dir: &std::path::Path) -> Option<Self> {
+        if !dev_log_extraction_details {
             return None;
         }
 
-        let log_path = get_move_log_path()?;
+        let log_path = app_data_dir.join("logs").join("extraction-moves.log");
 
         if let Some(parent) = log_path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
@@ -123,16 +125,4 @@ impl MoveLogger {
     }
 }
 
-fn should_log_to_file() -> bool {
-    SETTINGS
-        .read()
-        .map(|s| s.dev_log_extraction_details)
-        .unwrap_or(false)
-}
 
-fn get_move_log_path() -> Option<PathBuf> {
-    SETTINGS
-        .read()
-        .ok()
-        .map(|s| s.app_data_dir.join("logs").join("extraction-moves.log"))
-}

@@ -18,7 +18,7 @@
 //!                      \-> interrupted (on app restart, retryable)
 //! ```
 
-use crate::config::settings::SETTINGS;
+use crate::config::SettingsState;
 use crate::core::manifest;
 use crate::core::trash;
 use crate::db::{Database, NewProduct};
@@ -162,6 +162,7 @@ pub async fn update_import_task_status(
 pub async fn complete_import_task(
     state: State<'_, ImportTasksState>,
     products_db_state: State<'_, DbState>,
+    settings: State<'_, SettingsState>,
     id: String,
     destination: String,
     files_count: i64,
@@ -198,7 +199,7 @@ pub async fn complete_import_task(
 
     // If import succeeded and trash setting is enabled, move archives to trash
     if result.is_ok() {
-        let should_trash = SETTINGS
+        let should_trash = settings
             .read()
             .map(|s| s.trash_archives_after_import)
             .unwrap_or(false);

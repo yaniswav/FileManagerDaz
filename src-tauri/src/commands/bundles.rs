@@ -52,7 +52,7 @@ pub fn check_bundle_installed(
     archive_path: String,
     db_state: State<'_, DbState>,
 ) -> ApiResponse<bundles::PreInstallCheck> {
-    info!("Checking if bundle is installed: {}", archive_path);
+    debug!("Checking if bundle is installed: {}", archive_path);
 
     let path = PathBuf::from(&archive_path);
 

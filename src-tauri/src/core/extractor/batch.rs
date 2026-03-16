@@ -3,7 +3,7 @@
 //! Handles large-scale import operations with error recovery,
 //! progress reporting, and graceful degradation.
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::core::extractor::checkpoint::{cleanup_extracted_folders, Checkpoint};
 use crate::core::extractor::process_source_recursive;
 use crate::core::extractor::resilience::{
@@ -76,6 +76,7 @@ pub struct BatchStats {
 /// Batch processor with progress callback
 pub struct RobustBatchProcessor {
     config: ResilienceConfig,
+    settings: AppSettings,
     progress_callback: Option<Arc<Mutex<dyn FnMut(BatchProgress) + Send>>>,
     checkpoint_dir: Option<PathBuf>,
     session_id: Option<String>,
@@ -84,9 +85,10 @@ pub struct RobustBatchProcessor {
 
 impl RobustBatchProcessor {
     /// Create a new batch processor
-    pub fn new(config: ResilienceConfig) -> Self {
+    pub fn new(config: ResilienceConfig, settings: AppSettings) -> Self {
         Self {
             config,
+            settings,
             progress_callback: None,
             checkpoint_dir: None,
             session_id: None,
@@ -236,7 +238,7 @@ impl RobustBatchProcessor {
             // Process with recursive extraction
             info!("Processing: {:?}", path);
             let start = std::time::Instant::now();
-            let result = process_source_recursive(path, 5)?;
+            let result = process_source_recursive(path, 5, &self.settings)?;
 
             // Check timeout after processing
             guard.check_timeout()?;
@@ -345,12 +347,10 @@ impl RobustBatchProcessor {
 }
 
 /// Convenience function for batch processing with default settings
-pub fn process_batch_with_defaults(paths: Vec<PathBuf>) -> AppResult<BatchOperationResult> {
-    let settings = SETTINGS.read()
-        .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
+pub fn process_batch_with_defaults(paths: Vec<PathBuf>, settings: &AppSettings) -> AppResult<BatchOperationResult> {
     let config = settings.to_resilience_config();
 
-    RobustBatchProcessor::new(config).process_batch(paths)
+    RobustBatchProcessor::new(config, settings.clone()).process_batch(paths)
 }
 
 #[cfg(test)]
@@ -363,7 +363,8 @@ mod tests {
         let progress_clone = progress.clone();
 
         let config = ResilienceConfig::default();
-        let _processor = RobustBatchProcessor::new(config).with_progress(move |p| {
+        let settings = AppSettings::default();
+        let _processor = RobustBatchProcessor::new(config, settings).with_progress(move |p| {
             progress_clone.lock().unwrap().push(p);
         });
 

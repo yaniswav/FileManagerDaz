@@ -4,7 +4,7 @@
 //! - Orphan file detection (not in a referenced product)
 //! - Guided cleanup with backup
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -290,12 +290,8 @@ pub fn scan_library(library_path: &Path, options: &ScanOptions) -> AppResult<Mai
 }
 
 /// Quick scan of all libraries
-pub fn scan_all_libraries(options: &ScanOptions) -> AppResult<MaintenanceSummary> {
-    let settings = SETTINGS
-        .read()
-        .map_err(|_| AppError::Config("Lock error".into()))?;
+pub fn scan_all_libraries(options: &ScanOptions, settings: &AppSettings) -> AppResult<MaintenanceSummary> {
     let libraries = settings.daz_libraries.clone();
-    drop(settings);
 
     let mut combined = MaintenanceSummary {
         total_files_scanned: 0,
@@ -326,14 +322,9 @@ pub fn scan_all_libraries(options: &ScanOptions) -> AppResult<MaintenanceSummary
 ///
 /// Both paths are canonicalized to resolve symlinks, junctions, and relative segments.
 /// This prevents the frontend from requesting deletion of arbitrary system files.
-fn is_path_in_allowed_directory(path: &Path) -> bool {
+fn is_path_in_allowed_directory(path: &Path, settings: &AppSettings) -> bool {
     let canonical = match path.canonicalize() {
         Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let settings = match SETTINGS.read() {
-        Ok(s) => s,
         Err(_) => return false,
     };
 
@@ -364,6 +355,7 @@ pub fn cleanup_files(
     files: &[String],
     backup: bool,
     backup_dir: Option<&Path>,
+    settings: &AppSettings,
 ) -> AppResult<CleanupResult> {
     let mut result = CleanupResult {
         success: true,
@@ -379,9 +371,6 @@ pub fn cleanup_files(
         let dir = match backup_dir {
             Some(p) => p.to_path_buf(),
             None => {
-                let settings = SETTINGS
-                    .read()
-                    .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
                 PathBuf::from(&settings.temp_dir).join("maintenance_backup")
             }
         };
@@ -407,7 +396,7 @@ pub fn cleanup_files(
         }
 
         // Security: reject paths outside configured DAZ libraries and temp dir
-        if !is_path_in_allowed_directory(path) {
+        if !is_path_in_allowed_directory(path, settings) {
             result.errors.push(format!(
                 "Rejected: '{}' is not inside a configured DAZ library",
                 file_path

@@ -107,9 +107,10 @@ pub fn check_file_conflicts(
     }
 
     // Build a parameterized query for the file paths
-    let placeholders: Vec<String> = (0..file_paths.len()).map(|i| format!("?{}", i + 1)).collect();
-    let exclude_clause = if let Some(pid) = exclude_product_id {
-        format!(" AND pf.product_id != {}", pid)
+    let n_paths = file_paths.len();
+    let placeholders: Vec<String> = (0..n_paths).map(|i| format!("?{}", i + 1)).collect();
+    let exclude_clause = if exclude_product_id.is_some() {
+        format!(" AND pf.product_id != ?{}", n_paths + 1)
     } else {
         String::new()
     };
@@ -125,13 +126,16 @@ pub fn check_file_conflicts(
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = file_paths
         .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .map(|s| Box::new(s.clone()) as Box<dyn rusqlite::types::ToSql>)
         .collect();
+    if let Some(pid) = exclude_product_id {
+        params.push(Box::new(pid));
+    }
 
     let conflicts = stmt
-        .query_map(params.as_slice(), |row| {
+        .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
             Ok(FileConflict {
                 relative_path: row.get(0)?,
                 existing_product_id: row.get(1)?,
@@ -175,13 +179,6 @@ pub fn delete_product_files(conn: &Connection, product_id: i64) -> AppResult<usi
         rusqlite::params![product_id],
     )?;
     debug!("Deleted {} file records for product {}", count, product_id);
-    Ok(count)
-}
-
-/// Count the total tracked files across all products.
-pub fn count_all_tracked_files(conn: &Connection) -> AppResult<i64> {
-    let count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM product_files", [], |row| row.get(0))?;
     Ok(count)
 }
 
@@ -297,7 +294,9 @@ mod tests {
         conn.execute("DELETE FROM products WHERE id = ?1", rusqlite::params![pid])
             .unwrap();
 
-        let count = count_all_tracked_files(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM product_files", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 0);
     }
 }

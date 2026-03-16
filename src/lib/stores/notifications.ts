@@ -24,6 +24,7 @@ import {
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
+import { formatFileSize } from '$lib/api/commands';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -51,14 +52,6 @@ function isWindowFocused(): boolean {
   return document.hasFocus();
 }
 
-/** Format bytes to human-readable string. */
-function formatSize(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
-}
-
 /**
  * Send a notification (in-app toast + native if unfocused).
  */
@@ -70,7 +63,11 @@ async function send(type: ToastType, title: string, message: string, duration?: 
   if (!isWindowFocused()) {
     const permitted = await ensurePermission();
     if (permitted) {
-      sendNotification({ title, body: message });
+      try {
+        sendNotification({ title, body: message });
+      } catch (err) {
+        console.warn('[Notifications] Native notification failed:', err);
+      }
     }
   }
 }
@@ -87,7 +84,7 @@ export const notify = {
     send(
       'success',
       'Import Complete',
-      `${name} — ${fileCount} files (${formatSize(totalSize)})`
+      `${name} — ${fileCount} files (${formatFileSize(totalSize)})`
     ),
 
   /** Import failed */

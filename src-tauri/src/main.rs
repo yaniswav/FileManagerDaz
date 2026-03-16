@@ -34,7 +34,8 @@
 
 use commands::import_tasks::ImportTasksState;
 use commands::products::DbState;
-use config::SETTINGS;
+use config::SettingsState;
+use std::sync::{Arc, RwLock};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconEvent,
@@ -69,40 +70,46 @@ fn main() {
 
     info!("Starting FileManagerDaz");
 
+    // === Settings Initialization (managed state) ===
+    let settings_instance = config::settings::AppSettings::load_or_default();
+
     // === Configuration Logging ===
-    if let Ok(settings) = SETTINGS.read() {
-        info!("Database path: {:?}", settings.database_path);
-        info!("Temp dir: {:?}", settings.temp_dir);
-        info!(
-            "RAR extraction: {}",
-            if settings.can_extract_rar() {
-                "available"
-            } else {
-                "unavailable"
-            }
-        );
-    }
+    info!("Database path: {:?}", settings_instance.database_path);
+    info!("Temp dir: {:?}", settings_instance.temp_dir);
+    info!(
+        "RAR extraction: {}",
+        if settings_instance.can_extract_rar() {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
 
     // === Products Database Initialization ===
     let products_db_state = DbState::new();
-    if let Err(e) = products_db_state.init() {
-        error!("Failed to initialize products database: {}", e);
-    } else {
-        info!("Products database initialized successfully");
+    {
+        let db_path = &settings_instance.database_path;
+        info!("Opening database at: {:?}", db_path);
+        if let Err(e) = products_db_state.init_with_path(db_path) {
+            error!("Failed to initialize products database: {}", e);
+        } else {
+            info!("Products database initialized successfully");
+        }
     }
 
     // === Import Tasks Database Initialization ===
     let import_tasks_state = ImportTasksState::new();
-
-    // Initialize import tasks database (separate from products database)
-    if let Ok(settings) = SETTINGS.read() {
-        let import_tasks_db_path = settings.app_data_dir.join("import_tasks.db");
+    {
+        let import_tasks_db_path = settings_instance.app_data_dir.join("import_tasks.db");
         if let Err(e) = import_tasks_state.init(import_tasks_db_path.to_string_lossy().as_ref()) {
             error!("Failed to initialize import tasks database: {}", e);
         } else {
             info!("Import tasks database initialized");
         }
     }
+
+    // Wrap settings into managed state
+    let settings_state: SettingsState = Arc::new(RwLock::new(settings_instance));
 
     // === Folder Watcher State ===
     // Manages automatic watching of download folders for new archives
@@ -121,6 +128,7 @@ fn main() {
         .manage(products_db_state)
         .manage(import_tasks_state)
         .manage(folder_watcher_state)
+        .manage(settings_state.clone())
         // Command handlers (grouped by feature)
         .invoke_handler(tauri::generate_handler![
             // --- System Commands ---
@@ -266,10 +274,11 @@ fn main() {
         // === Window Close → Minimize to Tray or Ask ===
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let close_action = SETTINGS
-                    .read()
-                    .map(|s| s.close_action.clone())
-                    .unwrap_or_else(|_| "quit".to_string());
+                let close_action = window
+                    .app_handle()
+                    .try_state::<SettingsState>()
+                    .and_then(|s| s.read().ok().map(|s| s.close_action.clone()))
+                    .unwrap_or_else(|| "quit".to_string());
 
                 match close_action.as_str() {
                     "minimize" => {

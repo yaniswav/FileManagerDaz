@@ -21,6 +21,18 @@ export function normalizeContentType(value: string | null): KnownContentType | n
   return (KNOWN_CONTENT_TYPES as readonly string[]).includes(lower) ? (lower as KnownContentType) : null;
 }
 
+/**
+ * Returns a translated label for a content type.
+ * Falls back to the normalized type name if no translation exists.
+ */
+export function getContentTypeLabel(type: string | null, t: (key: string) => string): string {
+  const normalized = normalizeContentType(type);
+  if (!normalized) return t('common.unknown');
+  const key = `products.contentTypes.${normalized}`;
+  const translated = t(key);
+  return translated !== key ? translated : normalized;
+}
+
 export function getContentTypeIcon(value: string | null): string {
   const type = normalizeContentType(value);
   switch (type) {

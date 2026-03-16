@@ -33,7 +33,7 @@ pub async fn start_downloads(
         options.dest_dir
     );
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<DownloadProgressEvent>();
+    let (tx, mut rx) = mpsc::channel::<DownloadProgressEvent>(500);
 
     // Forward progress events to the frontend
     let app_handle = app.clone();

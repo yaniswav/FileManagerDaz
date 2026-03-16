@@ -3,7 +3,7 @@
 //! Note: Native RAR extraction in Rust is complex because libs require
 //! the proprietary UnRAR DLL. We therefore use an external binary.
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::error::{AppError, AppResult};
 use std::fs;
 use std::path::Path;
@@ -17,6 +17,7 @@ use super::utils::{count_directory_contents, ContentStats};
 /// # Arguments
 /// * `archive_path` - Path to the RAR archive
 /// * `dest_dir` - Destination directory
+/// * `settings` - Application settings (for unrar_path)
 ///
 /// # Returns
 /// `ContentStats` with file count, folder count and total size
@@ -24,12 +25,8 @@ use super::utils::{count_directory_contents, ContentStats};
 /// # Errors
 /// - `AppError::ExternalToolNotFound` if unrar.exe is not configured
 /// - `AppError::RarError` if extraction fails
-pub fn extract_rar(archive_path: &Path, dest_dir: &Path) -> AppResult<ContentStats> {
+pub fn extract_rar(archive_path: &Path, dest_dir: &Path, settings: &AppSettings) -> AppResult<ContentStats> {
     info!("Extracting RAR: {:?}", archive_path);
-
-    let settings = SETTINGS
-        .read()
-        .map_err(|e| AppError::Config(format!("Cannot read settings: {}", e)))?;
 
     let unrar_path = settings.unrar_path.clone().ok_or_else(|| {
         error!("UnRAR not found - RAR extraction unavailable");
@@ -37,8 +34,6 @@ pub fn extract_rar(archive_path: &Path, dest_dir: &Path) -> AppResult<ContentSta
             "UnRAR.exe not found. Install WinRAR or place UnRAR.exe in the PATH.".to_string(),
         )
     })?;
-
-    drop(settings); // Release lock before long operations
 
     fs::create_dir_all(dest_dir)?;
 

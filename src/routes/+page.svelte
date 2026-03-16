@@ -15,10 +15,14 @@
   import { initLogListeners, destroyLogListeners } from '$lib/stores/tasklog.svelte';
   import { initTheme, destroyTheme } from '$lib/stores/theme.svelte';
   import { formatFileSize, getAppConfig, pollWatchEvents, startWatching, getDownloadsFolder, scanWatchedFolder, type RecursiveExtractResult, type WatchEvent } from '$lib/api/commands';
+  import { get } from 'svelte/store';
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
   import { t, initLocale } from '$lib/i18n';
   import { checkForUpdates } from '$lib/api/updater.svelte';
+
+  const WATCHER_POLL_MS = 3_000;
+  const CONFIG_REFRESH_MS = 30_000;
 
   let activeTab: 'extract' | 'products' | 'tools' | 'settings' = $state('extract');
   let productsRefreshKey = $state(0);
@@ -26,8 +30,8 @@
   
   // Reactive state for completed tasks from store
   let recentTasks: ImportTask[] = $state([]);
-  const unsubscribe = completedTasks.subscribe(tasks => {
-    recentTasks = tasks.slice(0, 5); // Last 5
+  $effect(() => {
+    recentTasks = get(completedTasks).slice(0, 5);
   });
 
   let unlistenClose: (() => void) | null = null;
@@ -61,10 +65,10 @@
     }
   }
 
-  function confirmExtract(index: number) {
-    const archive = pendingConfirmArchives[index];
+  function confirmExtract(path: string) {
+    const archive = pendingConfirmArchives.find(a => a.path === path);
     if (!archive) return;
-    pendingConfirmArchives = pendingConfirmArchives.filter((_, i) => i !== index);
+    pendingConfirmArchives = pendingConfirmArchives.filter(a => a.path !== path);
     notify.info('Auto-Import', `Extracting: ${archive.fileName}`);
     processMultipleSources(
       [archive.path],
@@ -74,8 +78,8 @@
     );
   }
 
-  function dismissArchive(index: number) {
-    pendingConfirmArchives = pendingConfirmArchives.filter((_, i) => i !== index);
+  function dismissArchive(path: string) {
+    pendingConfirmArchives = pendingConfirmArchives.filter(a => a.path !== path);
   }
 
   // Initialize locale from settings on mount
@@ -119,7 +123,7 @@
         } catch {
           // Watcher may not be active, ignore
         }
-      }, 3000);
+      }, WATCHER_POLL_MS);
 
       // Re-read mode periodically (every 30s) in case user changed settings
       configPollInterval = setInterval(async () => {
@@ -127,7 +131,7 @@
           const freshConfig = await getAppConfig();
           cachedMode = freshConfig.autoImportMode || 'watch_only';
         } catch { /* ignore */ }
-      }, 30000);
+      }, CONFIG_REFRESH_MS);
     } catch (e) {
       console.error('Failed to load config for i18n:', e);
       initLocale('fr');
@@ -152,7 +156,7 @@
   });
 
   async function handleProcessed(result: RecursiveExtractResult) {
-    console.log('[Page] handleProcessed called with:', result);
+    if (import.meta.env.DEV) console.log('[Page] handleProcessed called with:', result);
 
     // Refresh the products list (products are now created server-side on completion)
     productsRefreshKey++;
@@ -204,13 +208,13 @@
       {#if pendingConfirmArchives.length > 0}
         <div class="pending-archives">
           <h3>📦 {$t('autoImport.pendingTitle')}</h3>
-          {#each pendingConfirmArchives as archive, i}
+          {#each pendingConfirmArchives as archive (archive.path)}
             <div class="pending-item">
               <span class="pending-name" title={archive.path}>{archive.fileName}</span>
-              <button class="btn-confirm" onclick={() => confirmExtract(i)}>
+              <button class="btn-confirm" onclick={() => confirmExtract(archive.path)}>
                 ✅ {$t('autoImport.extract')}
               </button>
-              <button class="btn-dismiss" onclick={() => dismissArchive(i)}>
+              <button class="btn-dismiss" onclick={() => dismissArchive(archive.path)}>
                 ✕
               </button>
             </div>

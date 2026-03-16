@@ -58,7 +58,7 @@
   let unlistenDrop: UnlistenFn | null = null;
 
   onMount(async () => {
-    console.log('[DropZone] onMount - Setting up listeners...');
+    if (import.meta.env.DEV) console.log('[DropZone] onMount - Setting up listeners...');
     
     // Load tasks from database
     await importsStore.loadFromDatabase();
@@ -76,7 +76,7 @@
       });
 
       unlistenDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
-        console.log('[DropZone] tauri://drag-drop received:', event);
+        if (import.meta.env.DEV) console.log('[DropZone] tauri://drag-drop received:', event);
         isDragOver = false;
         if (disabled) return;
         
@@ -85,14 +85,14 @@
           await handleProcessSources(paths);
         }
       });
-      console.log('[DropZone] All Tauri listeners ready!');
+      if (import.meta.env.DEV) console.log('[DropZone] All Tauri listeners ready!');
     } catch (e) {
       console.error('[DropZone] Failed to setup Tauri listeners:', e);
     }
   });
 
   onDestroy(() => {
-    console.log('[DropZone] onDestroy - Cleaning up');
+    if (import.meta.env.DEV) console.log('[DropZone] onDestroy - Cleaning up');
     unlistenDragEnter?.();
     unlistenDragLeave?.();
     unlistenDrop?.();
@@ -161,12 +161,14 @@
 
   async function clearResults() {
     await importsStore.clearCompleted();
-    expandedTasks.clear();
+    expandedTasks = new Set();
   }
 
   function removeItem(id: string) {
     importsStore.removeTask(id);
-    expandedTasks.delete(id);
+    const next = new Set(expandedTasks);
+    next.delete(id);
+    expandedTasks = next;
   }
 
   async function handleRetry(task: ImportTask) {

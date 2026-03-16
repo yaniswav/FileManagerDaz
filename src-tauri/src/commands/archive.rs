@@ -16,6 +16,7 @@
 //! blocking Tauri's main thread. Event emission via `app.emit()`
 //! is thread-safe and can be called from blocking threads.
 
+use crate::config::SettingsState;
 use crate::core::analyzer::{analyze_content, ContentType};
 use crate::core::extractor::{
     get_supported_formats, is_format_supported, process_source, process_source_recursive,
@@ -26,7 +27,7 @@ use crate::error::{ApiResponse, AppError, AppResult};
 use serde::Serialize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use tokio::task::spawn_blocking;
 use tracing::{error, info};
 
@@ -105,12 +106,17 @@ pub struct DestinationAlternativeFront {
 ///
 /// Runs on a blocking thread to avoid UI freezes.
 #[tauri::command]
-pub async fn process_source_cmd(path: String) -> ApiResponse<ExtractResult> {
+pub async fn process_source_cmd(
+    path: String,
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<ExtractResult>, String> {
     info!("process_source_cmd: {}", path);
+
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
 
     let result = spawn_blocking(move || {
         let source_path = PathBuf::from(&path);
-        catch_unwind_safe(|| process_source(&source_path))
+        catch_unwind_safe(|| process_source(&source_path, &settings_snapshot))
     })
     .await;
 
@@ -121,15 +127,15 @@ pub async fn process_source_cmd(path: String) -> ApiResponse<ExtractResult> {
                 extract_result.file_count,
                 extract_result.content_type()
             );
-            ApiResponse::success(extract_result)
+            Ok(ApiResponse::success(extract_result))
         }
         Ok(Err(app_error)) => {
             error!("Failed to process source: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
         Err(join_error) => {
             error!("Task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }
@@ -138,24 +144,34 @@ pub async fn process_source_cmd(path: String) -> ApiResponse<ExtractResult> {
 ///
 /// Returns information about the source type, format, and support status.
 #[tauri::command]
-pub async fn get_source_info(path: String) -> ApiResponse<SourceInfo> {
+pub async fn get_source_info(
+    path: String,
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<SourceInfo>, String> {
     info!("get_source_info: {}", path);
 
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
     let source_path = PathBuf::from(&path);
 
-    match build_source_info(&source_path) {
-        Ok(info) => ApiResponse::success(info),
+    match build_source_info(&source_path, &settings_snapshot) {
+        Ok(info) => Ok(ApiResponse::success(info)),
         Err(app_error) => {
             error!("Failed to get source info: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
     }
 }
 
 /// Returns the list of currently supported archive formats.
 #[tauri::command]
-pub fn get_supported_formats_cmd() -> ApiResponse<SupportedFormats> {
-    let formats = get_supported_formats();
+pub fn get_supported_formats_cmd(
+    settings: State<'_, SettingsState>,
+) -> ApiResponse<SupportedFormats> {
+    let settings_guard = match settings.read() {
+        Ok(s) => s,
+        Err(e) => return ApiResponse::error(AppError::Config(format!("Settings lock poisoned: {}", e))),
+    };
+    let formats = get_supported_formats(&settings_guard);
 
     let supported = SupportedFormats {
         formats: formats.iter().map(|f| f.extension().to_string()).collect(),
@@ -171,15 +187,20 @@ pub fn get_supported_formats_cmd() -> ApiResponse<SupportedFormats> {
 /// Returns results for each source, including both successes and failures.
 /// Runs on a blocking thread.
 #[tauri::command]
-pub async fn process_sources_batch(paths: Vec<String>) -> ApiResponse<Vec<BatchResult>> {
+pub async fn process_sources_batch(
+    paths: Vec<String>,
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<Vec<BatchResult>>, String> {
     info!("process_sources_batch: {} sources", paths.len());
+
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
 
     let result = spawn_blocking(move || {
         paths
             .into_iter()
             .map(|path| {
                 let source_path = PathBuf::from(&path);
-                match catch_unwind_safe(|| process_source(&source_path)) {
+                match catch_unwind_safe(|| process_source(&source_path, &settings_snapshot)) {
                     Ok(extract_result) => BatchResult {
                         path,
                         success: true,
@@ -206,11 +227,11 @@ pub async fn process_sources_batch(paths: Vec<String>) -> ApiResponse<Vec<BatchR
                 success_count,
                 batch_results.len()
             );
-            ApiResponse::success(batch_results)
+            Ok(ApiResponse::success(batch_results))
         }
         Err(join_error) => {
             error!("Batch task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }
@@ -225,13 +246,16 @@ pub async fn process_sources_batch(paths: Vec<String>) -> ApiResponse<Vec<BatchR
 pub async fn process_source_recursive_cmd(
     path: String,
     max_depth: Option<usize>,
-) -> ApiResponse<RecursiveExtractResult> {
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<RecursiveExtractResult>, String> {
     let depth = max_depth.unwrap_or(5);
     info!("process_source_recursive: {} (max_depth: {})", path, depth);
 
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
+
     let result = spawn_blocking(move || {
         let source_path = PathBuf::from(&path);
-        catch_unwind_safe(|| process_source_recursive(&source_path, depth))
+        catch_unwind_safe(|| process_source_recursive(&source_path, depth, &settings_snapshot))
     })
     .await;
 
@@ -243,15 +267,15 @@ pub async fn process_source_recursive_cmd(
                 extract_result.nested_archives.len(),
                 extract_result.max_depth_reached
             );
-            ApiResponse::success(extract_result)
+            Ok(ApiResponse::success(extract_result))
         }
         Ok(Err(app_error)) => {
             error!("Failed to process source recursively: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
         Err(join_error) => {
             error!("Task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }
@@ -284,7 +308,8 @@ pub async fn process_source_recursive_with_events_cmd(
     task_id: String,
     path: String,
     max_depth: Option<usize>,
-) -> ApiResponse<RecursiveExtractResult> {
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<RecursiveExtractResult>, String> {
     info!(
         "process_source_recursive_with_events: {} (task_id: {}, max_depth: {:?})",
         path, task_id, max_depth
@@ -296,6 +321,7 @@ pub async fn process_source_recursive_with_events_cmd(
         path, task_id, depth
     );
 
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
     let task_id_for_events = task_id.clone();
     let app_for_events = app.clone();
 
@@ -318,7 +344,7 @@ pub async fn process_source_recursive_with_events_cmd(
             }
         };
 
-        catch_unwind_safe(|| process_source_recursive_with_events(&source_path, depth, emit_step))
+        catch_unwind_safe(|| process_source_recursive_with_events(&source_path, depth, &settings_snapshot, emit_step))
     })
     .await;
 
@@ -330,15 +356,15 @@ pub async fn process_source_recursive_with_events_cmd(
                 extract_result.nested_archives.len(),
                 extract_result.max_depth_reached
             );
-            ApiResponse::success(extract_result)
+            Ok(ApiResponse::success(extract_result))
         }
         Ok(Err(app_error)) => {
             error!("Failed to process source recursively: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
         Err(join_error) => {
             error!("Task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }
@@ -353,8 +379,14 @@ pub async fn process_source_recursive_with_events_cmd(
 pub fn propose_destination_cmd(
     temp_path: String,
     library_path: Option<String>,
+    settings: State<'_, SettingsState>,
 ) -> ApiResponse<DestinationProposalFront> {
     use crate::core::destination::propose_destination;
+
+    let settings_guard = match settings.read() {
+        Ok(s) => s,
+        Err(e) => return ApiResponse::error(AppError::Config(format!("Settings lock poisoned: {}", e))),
+    };
 
     let temp = PathBuf::from(&temp_path);
     if !temp.exists() {
@@ -376,7 +408,7 @@ pub fn propose_destination_cmd(
         .unwrap_or("content")
         .to_string();
 
-    match propose_destination(&analysis, &source_name) {
+    match propose_destination(&analysis, &source_name, &settings_guard) {
         Ok(proposal) => {
             let front = DestinationProposalFront::from_backend(proposal, &analysis, library_path);
             ApiResponse::success(front)
@@ -624,7 +656,7 @@ pub struct MoveResult {
 // =============================================================================
 
 /// Builds source information from a path.
-fn build_source_info(path: &Path) -> AppResult<SourceInfo> {
+fn build_source_info(path: &Path, settings: &crate::config::AppSettings) -> AppResult<SourceInfo> {
     if !path.exists() {
         return Err(AppError::NotFound(path.to_path_buf()));
     }
@@ -646,7 +678,7 @@ fn build_source_info(path: &Path) -> AppResult<SourceInfo> {
         })
     } else {
         let format = ArchiveFormat::from_extension(path);
-        let is_supported = format.map(is_format_supported).unwrap_or(false);
+        let is_supported = format.map(|f| is_format_supported(f, settings)).unwrap_or(false);
         let file_size = std::fs::metadata(path).map(|m| m.len()).ok();
 
         Ok(SourceInfo {
@@ -688,8 +720,8 @@ pub struct TrashResult {
 pub async fn trash_source_archive(
     source_path: String,
     destination_path: String,
-) -> ApiResponse<TrashResult> {
-    use crate::config::SETTINGS;
+    settings: tauri::State<'_, crate::config::SettingsState>,
+) -> Result<ApiResponse<TrashResult>, String> {
     use crate::core::trash::{is_archive_file, move_to_trash};
 
     info!(
@@ -701,48 +733,48 @@ pub async fn trash_source_archive(
     let destination = PathBuf::from(&destination_path);
 
     // Check global setting
-    let trash_enabled = SETTINGS
+    let trash_enabled = settings
         .read()
         .map(|s| s.trash_archives_after_import)
         .unwrap_or(false);
 
     if !trash_enabled {
         info!("Trash after import is disabled, skipping");
-        return ApiResponse::success(TrashResult {
+        return Ok(ApiResponse::success(TrashResult {
             trashed: false,
             path: source_path,
             error: None,
-        });
+        }));
     }
 
     // Check that it's an archive file
     if !is_archive_file(&source) {
         info!("Source is not an archive file, skipping trash");
-        return ApiResponse::success(TrashResult {
+        return Ok(ApiResponse::success(TrashResult {
             trashed: false,
             path: source_path,
             error: None,
-        });
+        }));
     }
 
     // Check that source still exists
     if !source.exists() {
         info!("Source archive no longer exists, skipping trash");
-        return ApiResponse::success(TrashResult {
+        return Ok(ApiResponse::success(TrashResult {
             trashed: false,
             path: source_path,
             error: Some("Source archive no longer exists".to_string()),
-        });
+        }));
     }
 
     // Check that destination exists (successful import)
     if !destination.exists() {
         info!("Destination does not exist, skipping trash");
-        return ApiResponse::success(TrashResult {
+        return Ok(ApiResponse::success(TrashResult {
             trashed: false,
             path: source_path,
             error: Some("Destination does not exist, import not confirmed".to_string()),
-        });
+        }));
     }
 
     // Execute trash move on a blocking thread
@@ -752,30 +784,30 @@ pub async fn trash_source_archive(
     match result {
         Ok(Ok(_)) => {
             info!("Archive successfully moved to trash: {}", source_path);
-            ApiResponse::success(TrashResult {
+            Ok(ApiResponse::success(TrashResult {
                 trashed: true,
                 path: source_path,
                 error: None,
-            })
+            }))
         }
         Ok(Err(trash_error)) => {
             // Trash failed, but import remains successful
             let error_msg = format!("Failed to move to trash: {}", trash_error);
             error!("{}", error_msg);
-            ApiResponse::success(TrashResult {
+            Ok(ApiResponse::success(TrashResult {
                 trashed: false,
                 path: source_path,
                 error: Some(error_msg),
-            })
+            }))
         }
         Err(join_error) => {
             let error_msg = format!("Error during trash operation: {}", join_error);
             error!("{}", error_msg);
-            ApiResponse::success(TrashResult {
+            Ok(ApiResponse::success(TrashResult {
                 trashed: false,
                 path: source_path,
                 error: Some(error_msg),
-            })
+            }))
         }
     }
 }
@@ -809,12 +841,14 @@ pub async fn normalize_batch_cmd(
     source_path: String,
     destination_path: Option<String>,
     task_id: Option<String>,
-) -> ApiResponse<NormalizeBatchResult> {
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<NormalizeBatchResult>, String> {
     info!(
         "normalize_batch_cmd: source={}, dest={:?}",
         source_path, destination_path
     );
 
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
     let source = PathBuf::from(&source_path);
     let destination = destination_path.map(PathBuf::from);
     let event_task_id = task_id.clone().unwrap_or_else(|| "normalize".to_string());
@@ -822,7 +856,7 @@ pub async fn normalize_batch_cmd(
     let result = spawn_blocking(move || {
         let dest_ref = destination.as_deref();
 
-        normalize_and_merge_batch(&source, dest_ref, |step, detail| {
+        normalize_and_merge_batch(&source, dest_ref, &settings_snapshot, |step: &str, detail: Option<&str>| {
             let event = NormalizeStepEvent {
                 step: step.to_string(),
                 detail: detail.map(String::from),
@@ -841,15 +875,15 @@ pub async fn normalize_batch_cmd(
                 normalize_result.folders_normalized,
                 normalize_result.folders_merged
             );
-            ApiResponse::success(normalize_result)
+            Ok(ApiResponse::success(normalize_result))
         }
         Ok(Err(app_error)) => {
             error!("Failed to normalize batch: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
         Err(join_error) => {
             error!("Task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }
@@ -875,8 +909,8 @@ pub async fn process_batch_robust(
     app: AppHandle,
     paths: Vec<String>,
     task_id: Option<String>,
-) -> ApiResponse<crate::core::extractor::BatchOperationResult> {
-    use crate::config::SETTINGS;
+    settings: tauri::State<'_, crate::config::SettingsState>,
+) -> Result<ApiResponse<crate::core::extractor::BatchOperationResult>, String> {
     use crate::core::extractor::{BatchProgress, RobustBatchProcessor};
 
     let event_task_id = task_id.unwrap_or_else(|| {
@@ -893,6 +927,12 @@ pub async fn process_batch_robust(
         event_task_id
     );
 
+    // Snapshot settings before entering spawn_blocking
+    let settings_snapshot = match settings.read() {
+        Ok(s) => s.clone(),
+        Err(_) => return Ok(ApiResponse::error(AppError::Config("Settings lock poisoned".into()))),
+    };
+
     // Convert string paths to PathBuf
     let source_paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
 
@@ -904,13 +944,10 @@ pub async fn process_batch_robust(
     let session_id = event_task_id.clone();
 
     let result = spawn_blocking(move || {
-        // Get resilience config from settings
-        let settings = SETTINGS.read()
-            .map_err(|_| AppError::Config("Settings lock poisoned".into()))?;
-        let config = settings.to_resilience_config();
+        let config = settings_snapshot.to_resilience_config();
 
         // Create processor with progress callback, checkpoint, and cleanup
-        RobustBatchProcessor::new(config)
+        RobustBatchProcessor::new(config, settings_snapshot)
             .with_progress(move |progress: BatchProgress| {
                 let event_name = format!("batch-progress-{}", event_task_id);
                 let _ = app.emit(&event_name, &progress);
@@ -929,15 +966,15 @@ pub async fn process_batch_robust(
                 batch_result.stats.total_items,
                 batch_result.stats.failed
             );
-            ApiResponse::success(batch_result)
+            Ok(ApiResponse::success(batch_result))
         }
         Ok(Err(app_error)) => {
             error!("Failed to process batch: {}", app_error);
-            ApiResponse::error(app_error)
+            Ok(ApiResponse::error(app_error))
         }
         Err(join_error) => {
             error!("Task panicked: {}", join_error);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", join_error))))
         }
     }
 }

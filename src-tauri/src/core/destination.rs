@@ -2,7 +2,7 @@
 //!
 //! Proposes a fine-grained destination based on DAZ content analysis.
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::core::analyzer::{AnalysisSummary, ContentType};
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
@@ -231,11 +231,8 @@ pub fn default_rules() -> Vec<DestinationRule> {
 pub fn propose_destination(
     analysis: &AnalysisSummary,
     source_name: &str,
+    settings: &AppSettings,
 ) -> AppResult<DestinationProposal> {
-    let settings = SETTINGS
-        .read()
-        .map_err(|e| crate::error::AppError::Config(format!("Cannot read settings: {}", e)))?;
-
     // Get the default library
     let library_path = settings
         .default_destination
@@ -244,8 +241,6 @@ pub fn propose_destination(
         .unwrap_or_else(|| PathBuf::from(""));
 
     let library_str = library_path.to_string_lossy().to_string();
-
-    drop(settings);
 
     let rules = default_rules();
     let mut matched_rules: Vec<(u8, &DestinationRule)> = Vec::new();
@@ -407,7 +402,8 @@ mod tests {
             warnings: vec![],
         };
 
-        let proposal = propose_destination(&analysis, "Victoria 9").unwrap();
+        let settings = AppSettings::default();
+        let proposal = propose_destination(&analysis, "Victoria 9", &settings).unwrap();
         assert!(proposal.relative_path.contains("Genesis 9"));
         assert!(
             proposal.relative_path.contains("Character")

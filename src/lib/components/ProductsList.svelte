@@ -72,6 +72,7 @@
   // 2D keyboard navigation
   let focusedIndex: number = $state(-1);
   let gridEl: HTMLDivElement | undefined = $state(undefined);
+  let cachedCols = 1;
 
   // Collections
   let collections: Collection[] = $state([]);
@@ -125,6 +126,10 @@
     return Math.max(1, Math.round((gridWidth + gap) / (cardWidth + gap)));
   }
 
+  function updateCachedCols() {
+    cachedCols = getGridColumns();
+  }
+
   /** Scroll a card into the visible area of the grid container */
   function scrollCardIntoView(index: number) {
     if (!gridEl || index < 0 || index >= gridEl.children.length) return;
@@ -142,6 +147,10 @@
     void loadVendors();
     void loadCollectionsData();
     void loadProducts(false);
+
+    // Cache grid column count on resize
+    updateCachedCols();
+    window.addEventListener('resize', updateCachedCols);
 
     // Listen for scan task completion via the global task event system
     listen<TaskEndPayload>('app-task-end', (event) => {
@@ -203,8 +212,8 @@
           return;
         }
 
-        // Calculate columns from actual grid width
-        const cols = getGridColumns();
+        // Use cached column count for navigation
+        const cols = cachedCols;
         let next = focusedIndex;
 
         if (e.key === 'ArrowRight') next = Math.min(focusedIndex + 1, products.length - 1);
@@ -229,6 +238,7 @@
   onDestroy(() => {
     unlistenTaskEnd?.();
     unsubscribeCompleted?.();
+    window.removeEventListener('resize', updateCachedCols);
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 

@@ -4,7 +4,7 @@
 //!
 //! ## Overview
 //!
-//! The [`SETTINGS`] global provides thread-safe access to:
+//! Settings are managed as Tauri state via [`SettingsState`]:
 //! - Application data directories (database, temp files)
 //! - DAZ library paths
 //! - External tool paths (unrar.exe)
@@ -17,4 +17,4 @@
 
 pub mod settings;
 
-pub use settings::SETTINGS;
+pub use settings::{AppSettings, SettingsState};

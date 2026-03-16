@@ -60,7 +60,7 @@ fn read_duf_json(path: &Path) -> AppResult<Value> {
         // GZIP-compressed
         let decoder = GzDecoder::new(reader);
         serde_json::from_reader(decoder).map_err(|e| {
-            crate::error::AppError::Other(format!(
+            crate::error::AppError::Internal(format!(
                 "Failed to parse GZIP DUF {}: {}",
                 path.display(),
                 e
@@ -69,7 +69,7 @@ fn read_duf_json(path: &Path) -> AppResult<Value> {
     } else {
         // Plain JSON
         serde_json::from_reader(reader).map_err(|e| {
-            crate::error::AppError::Other(format!(
+            crate::error::AppError::Internal(format!(
                 "Failed to parse DUF JSON {}: {}",
                 path.display(),
                 e

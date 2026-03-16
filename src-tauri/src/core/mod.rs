@@ -28,6 +28,8 @@ pub mod duf_parser;
 pub mod extractor;
 pub mod maintenance;
 pub mod manifest;
+pub mod orphan_scanner;
 pub mod scene_analyzer;
+pub mod thumbnails;
 pub mod trash;
 pub mod watcher;

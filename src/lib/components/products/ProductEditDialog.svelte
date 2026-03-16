@@ -12,7 +12,7 @@
     type Product,
     type IntegrityReport,
   } from '$lib/api/commands';
-  import { KNOWN_CONTENT_TYPES, normalizeContentType, getContentTypeIcon } from './utils';
+  import { KNOWN_CONTENT_TYPES, normalizeContentType, getContentTypeIcon, getContentTypeLabel } from './utils';
   import CustomSelect from '$lib/components/ui/CustomSelect.svelte';
 
   interface Props {
@@ -71,14 +71,6 @@
         first.focus();
       }
     }
-  }
-
-  function getContentTypeLabel(type: string): string {
-    const normalized = normalizeContentType(type);
-    if (!normalized) return $t('common.unknown');
-    const key = `products.contentTypes.${normalized}`;
-    const translated = $t(key);
-    return translated !== key ? translated : normalized;
   }
 
   function getOriginLabel(origin?: string | null): string {
@@ -231,7 +223,7 @@
             <CustomSelect
               id="ed-type"
               bind:value={contentType}
-              options={KNOWN_CONTENT_TYPES.map(ct => ({ value: ct, label: getContentTypeLabel(ct) }))}
+              options={KNOWN_CONTENT_TYPES.map(ct => ({ value: ct, label: getContentTypeLabel(ct, $t) }))}
             />
           </div>
 

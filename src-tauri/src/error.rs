@@ -33,16 +33,11 @@ use thiserror::Error;
 /// All recoverable errors in the application are represented by this enum.
 /// Each variant maps to an `ApiError` code for frontend consumption.
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum AppError {
     // === Filesystem Errors ===
     /// File or directory does not exist
     #[error("File or folder not found: {0}")]
     NotFound(PathBuf),
-
-    /// Insufficient permissions to access file or directory
-    #[error("Access denied: {0}")]
-    PermissionDenied(PathBuf),
 
     /// Generic I/O error (read, write, seek, etc.)
     #[error("I/O error: {0}")]
@@ -78,10 +73,6 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(String),
 
-    /// Product with given ID not found in catalog
-    #[error("Product not found: id={0}")]
-    ProductNotFound(i64),
-
     // === Configuration Errors ===
     /// Application configuration is invalid or missing
     #[error("Configuration error: {0}")]
@@ -95,14 +86,6 @@ pub enum AppError {
     /// Unexpected internal error (bug or unhandled case)
     #[error("Internal error: {0}")]
     Internal(String),
-
-    /// Operation was cancelled by the user
-    #[error("Operation cancelled")]
-    Cancelled,
-
-    /// Catch-all for other errors
-    #[error("{0}")]
-    Other(String),
 }
 
 // === Error Conversions ===
@@ -160,9 +143,6 @@ impl From<&AppError> for ApiError {
         let (code, details) = match err {
             // Filesystem errors
             AppError::NotFound(path) => ("NOT_FOUND", Some(path.display().to_string())),
-            AppError::PermissionDenied(path) => {
-                ("PERMISSION_DENIED", Some(path.display().to_string()))
-            }
             AppError::Io(_) => ("IO_ERROR", None),
 
             // Archive errors
@@ -175,7 +155,6 @@ impl From<&AppError> for ApiError {
 
             // Database errors
             AppError::Database(msg) => ("DATABASE_ERROR", Some(msg.clone())),
-            AppError::ProductNotFound(id) => ("PRODUCT_NOT_FOUND", Some(id.to_string())),
 
             // Configuration errors
             AppError::Config(msg) => ("CONFIG_ERROR", Some(msg.clone())),
@@ -183,8 +162,6 @@ impl From<&AppError> for ApiError {
 
             // Generic errors
             AppError::Internal(msg) => ("INTERNAL_ERROR", Some(msg.clone())),
-            AppError::Cancelled => ("CANCELLED", None),
-            AppError::Other(msg) => ("ERROR", Some(msg.clone())),
         };
 
         ApiError {

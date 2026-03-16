@@ -6,7 +6,7 @@
 //! - Already correct DAZ folders to merge
 //! - Loose files (poses, promo images, etc.)
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::error::{AppError, AppResult};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -79,6 +79,7 @@ const DAZ_EXTENSIONS: &[&str] = &[
 pub fn normalize_and_merge_batch<F>(
     source_dir: &Path,
     destination: Option<&Path>,
+    settings: &AppSettings,
     emit_step: F,
 ) -> AppResult<NormalizeBatchResult>
 where
@@ -97,9 +98,6 @@ where
     let dest_path = match destination {
         Some(d) => d.to_path_buf(),
         None => {
-            let settings = SETTINGS
-                .read()
-                .map_err(|e| AppError::Config(format!("Cannot read settings: {}", e)))?;
             settings.default_destination.clone().ok_or_else(|| {
                 AppError::Config(
                     "No destination specified and no default library configured".to_string(),
@@ -135,7 +133,7 @@ where
     if !archives.is_empty() {
         info!("Found {} archives to extract", archives.len());
         result.archives_extracted =
-            extract_archives_parallel(&archives, source_dir, &mut result.errors)?;
+            extract_archives_parallel(&archives, source_dir, &mut result.errors, settings)?;
         emit_step(
             &format!("{} archives extracted", result.archives_extracted),
             None,
@@ -245,6 +243,7 @@ fn extract_archives_parallel(
     archives: &[PathBuf],
     source_dir: &Path,
     errors: &mut Vec<String>,
+    settings: &AppSettings,
 ) -> AppResult<usize> {
     let errors_mutex: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let success_count: Mutex<usize> = Mutex::new(0);
@@ -267,7 +266,7 @@ fn extract_archives_parallel(
             .unwrap_or("extracted");
         let extract_dir = source_dir.join(extract_name);
 
-        match extract_archive_by_format(archive, &extract_dir, format) {
+        match extract_archive_by_format(archive, &extract_dir, format, settings) {
             Ok(_) => {
                 // Delete the archive after successful extraction
                 if let Err(e) = fs::remove_file(archive) {

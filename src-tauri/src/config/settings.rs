@@ -1,22 +1,18 @@
 //! # Application Settings
 //!
-//! Global application configuration with JSON persistence.
+//! Application configuration with JSON persistence, managed via Tauri state.
 //!
 //! ## Usage
 //!
-//! Access settings via the global [`SETTINGS`] instance:
+//! Settings are registered as managed state in `main.rs` and injected
+//! into Tauri commands via `tauri::State<SettingsState>`:
 //! ```ignore
-//! use crate::config::SETTINGS;
+//! use crate::config::SettingsState;
 //!
-//! // Read settings
-//! if let Ok(settings) = SETTINGS.read() {
-//!     println!("Temp dir: {:?}", settings.temp_dir);
-//! }
-//!
-//! // Write settings
-//! if let Ok(mut settings) = SETTINGS.write() {
-//!     settings.trash_archives_after_import = true;
-//!     settings.save().ok();
+//! #[tauri::command]
+//! fn my_command(settings: tauri::State<'_, SettingsState>) {
+//!     let s = settings.read().unwrap();
+//!     println!("Temp dir: {:?}", s.temp_dir);
 //! }
 //! ```
 //!
@@ -26,11 +22,10 @@
 //! - Windows: `%LOCALAPPDATA%\FileManagerDaz\settings.json`
 
 use crate::error::{AppError, AppResult};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 
 /// Generates a pseudo-random suffix to ensure unique directory names.
@@ -45,12 +40,12 @@ fn rand_suffix() -> u32 {
 }
 
 // =============================================================================
-// GLOBAL SETTINGS INSTANCE
+// MANAGED SETTINGS STATE
 // =============================================================================
 
-/// Global settings instance, lazily initialized on first access.
-pub static SETTINGS: Lazy<RwLock<AppSettings>> =
-    Lazy::new(|| RwLock::new(AppSettings::load_or_default()));
+/// Thread-safe settings state, registered with `app.manage()` and injected
+/// into Tauri commands via `tauri::State<SettingsState>`.
+pub type SettingsState = Arc<RwLock<AppSettings>>;
 
 // =============================================================================
 // SETTINGS STRUCT

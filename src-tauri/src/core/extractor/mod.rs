@@ -69,7 +69,7 @@ pub use recursive::{
 #[allow(unused_imports)]
 pub use utils::format_size;
 
-use crate::config::SETTINGS;
+use crate::config::settings::AppSettings;
 use crate::core::analyzer::{analyze_content, AnalysisSummary};
 use crate::error::{AppError, AppResult};
 use serde::Serialize;
@@ -198,7 +198,7 @@ pub struct ExtractResult {
 ///
 /// Returns `AppError::NotFound` if path doesn't exist, or extraction-specific
 /// errors for archive processing failures.
-pub fn process_source(path: &Path) -> AppResult<ExtractResult> {
+pub fn process_source(path: &Path, settings: &AppSettings) -> AppResult<ExtractResult> {
     info!("Processing source: {:?}", path);
 
     if !path.exists() {
@@ -223,9 +223,9 @@ pub fn process_source(path: &Path) -> AppResult<ExtractResult> {
     };
 
     let result = if effective_path.is_dir() {
-        process_directory(&effective_path)?
+        process_directory(&effective_path, settings)?
     } else if effective_path.is_file() {
-        process_archive_file(&effective_path)?
+        process_archive_file(&effective_path, settings)?
     } else {
         return Err(AppError::InvalidPath(format!(
             "Path is neither file nor directory: {}",
@@ -249,7 +249,7 @@ pub fn process_source(path: &Path) -> AppResult<ExtractResult> {
 ///
 /// Copies the directory content to a temporary location to allow safe
 /// recursive extraction of nested archives without modifying the original.
-fn process_directory(source_dir: &Path) -> AppResult<ExtractResult> {
+fn process_directory(source_dir: &Path, settings: &AppSettings) -> AppResult<ExtractResult> {
     info!("Processing directory: {:?}", source_dir);
 
     // Generate temp destination path
@@ -258,12 +258,7 @@ fn process_directory(source_dir: &Path) -> AppResult<ExtractResult> {
         .and_then(|name| name.to_str())
         .unwrap_or("folder");
 
-    let settings = SETTINGS
-        .read()
-        .map_err(|e| AppError::Config(format!("Cannot read settings: {}", e)))?;
-
     let temp_destination = settings.temp_dir.join(format!("{}_import", dir_name));
-    drop(settings);
 
     // Clean up any existing temp folder
     if temp_destination.exists() {
@@ -302,7 +297,7 @@ fn process_directory(source_dir: &Path) -> AppResult<ExtractResult> {
 // =============================================================================
 
 /// Extracts an archive file to a temporary directory.
-fn process_archive_file(archive_path: &Path) -> AppResult<ExtractResult> {
+fn process_archive_file(archive_path: &Path, settings: &AppSettings) -> AppResult<ExtractResult> {
     let format = ArchiveFormat::from_extension(archive_path).ok_or_else(|| {
         AppError::UnsupportedFormat(format!(
             "Unknown archive extension: {}",
@@ -316,12 +311,7 @@ fn process_archive_file(archive_path: &Path) -> AppResult<ExtractResult> {
         .and_then(|stem| stem.to_str())
         .unwrap_or("extracted");
 
-    let settings = SETTINGS
-        .read()
-        .map_err(|e| AppError::Config(format!("Cannot read settings: {}", e)))?;
-
     let extraction_dir = settings.get_extraction_dir(archive_name)?;
-    drop(settings);
 
     info!("Extracting {:?} to {:?}", archive_path, extraction_dir);
 
@@ -350,12 +340,12 @@ fn process_archive_file(archive_path: &Path) -> AppResult<ExtractResult> {
                 "Detected RAR multi-part archive with {} parts",
                 info.all_parts.len()
             );
-            rar::extract_rar(&info.first_part, &extraction_dir)?
+            rar::extract_rar(&info.first_part, &extraction_dir, settings)?
         }
         // Regular single archive
         (_, ArchiveFormat::Zip) => zip::extract_zip(archive_path, &extraction_dir)?,
         (_, ArchiveFormat::SevenZip) => seven_zip::extract_7z(archive_path, &extraction_dir)?,
-        (_, ArchiveFormat::Rar) => rar::extract_rar(archive_path, &extraction_dir)?,
+        (_, ArchiveFormat::Rar) => rar::extract_rar(archive_path, &extraction_dir, settings)?,
     };
 
     let root_entries = get_root_entries(&extraction_dir)?;
@@ -381,28 +371,21 @@ fn process_archive_file(archive_path: &Path) -> AppResult<ExtractResult> {
 /// Checks if an archive format is currently supported.
 ///
 /// ZIP and 7z are always supported. RAR requires `unrar.exe` to be available.
-pub fn is_format_supported(format: ArchiveFormat) -> bool {
+pub fn is_format_supported(format: ArchiveFormat, settings: &AppSettings) -> bool {
     match format {
         ArchiveFormat::Zip => true,
         ArchiveFormat::SevenZip => true,
-        ArchiveFormat::Rar => SETTINGS
-            .read()
-            .map(|settings| settings.can_extract_rar())
-            .unwrap_or(false),
+        ArchiveFormat::Rar => settings.can_extract_rar(),
     }
 }
 
 /// Returns a list of all currently supported archive formats.
 ///
 /// RAR is included only if `unrar.exe` is available.
-pub fn get_supported_formats() -> Vec<ArchiveFormat> {
+pub fn get_supported_formats(settings: &AppSettings) -> Vec<ArchiveFormat> {
     let mut formats = vec![ArchiveFormat::Zip, ArchiveFormat::SevenZip];
 
-    if SETTINGS
-        .read()
-        .map(|s| s.can_extract_rar())
-        .unwrap_or(false)
-    {
+    if settings.can_extract_rar() {
         formats.push(ArchiveFormat::Rar);
     }
 
@@ -456,7 +439,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let content_dir = create_test_directory(temp_dir.path());
 
-        let result = process_source(&content_dir).unwrap();
+        let settings = AppSettings::default();
+        let result = process_source(&content_dir, &settings).unwrap();
 
         assert_eq!(result.source_type, SourceType::Directory);
         assert_eq!(result.archive_format, None);
@@ -467,7 +451,8 @@ mod tests {
 
     #[test]
     fn test_process_nonexistent_source() {
-        let result = process_source(Path::new("/nonexistent/path"));
+        let settings = AppSettings::default();
+        let result = process_source(Path::new("/nonexistent/path"), &settings);
         assert!(result.is_err());
     }
 

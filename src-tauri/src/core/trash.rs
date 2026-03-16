@@ -80,14 +80,17 @@ pub fn move_to_trash(path: &Path) -> AppResult<bool> {
     }
 
     // All retries failed
-    let err = last_error.unwrap();
+    let err_msg = match last_error {
+        Some(e) => format!("{}", e),
+        None => "Unknown error (no attempts made)".to_string(),
+    };
     warn!(
         "Failed to move to trash after {} attempts: {}",
-        max_retries, err
+        max_retries, err_msg
     );
     Err(AppError::Io(std::io::Error::new(
         std::io::ErrorKind::Other,
-        format!("Failed to move to trash: {}", err),
+        format!("Failed to move to trash: {}", err_msg),
     )))
 }
 

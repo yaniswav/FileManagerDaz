@@ -229,7 +229,7 @@ fn extract_gdrive_id(url: &str) -> Option<String> {
 pub async fn run_batch_downloads(
     links: Vec<DownloadLink>,
     options: DownloadOptions,
-    event_tx: mpsc::UnboundedSender<DownloadProgressEvent>,
+    event_tx: mpsc::Sender<DownloadProgressEvent>,
 ) -> AppResult<DownloadSummary> {
     let dest_dir = PathBuf::from(&options.dest_dir);
     std::fs::create_dir_all(&dest_dir).map_err(|e| {
@@ -276,7 +276,7 @@ pub async fn run_batch_downloads(
             let _permit = sem.acquire().await.expect("semaphore closed");
 
             // Emit pending → downloading
-            let _ = tx.send(DownloadProgressEvent {
+            let _ = tx.try_send(DownloadProgressEvent {
                 index,
                 total,
                 file_name: None,
@@ -299,7 +299,7 @@ pub async fn run_batch_downloads(
                 DownloadStatus::Completed { file_name, .. } => Some(file_name.clone()),
                 _ => None,
             };
-            let _ = tx.send(DownloadProgressEvent {
+            let _ = tx.try_send(DownloadProgressEvent {
                 index,
                 total,
                 file_name,

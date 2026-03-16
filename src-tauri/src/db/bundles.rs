@@ -149,7 +149,7 @@ pub fn register_bundle(
     )?;
 
     let id = conn.last_insert_rowid();
-    info!(
+    debug!(
         "Registered bundle {} with hash {}",
         id,
         &archive_hash[..16.min(archive_hash.len())]

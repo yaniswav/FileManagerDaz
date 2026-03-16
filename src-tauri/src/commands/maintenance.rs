@@ -2,12 +2,14 @@
 //!
 //! Uses `spawn_blocking` for scan operations that can be long-running.
 
+use crate::config::SettingsState;
 use crate::core::maintenance::{
     cleanup_empty_folders, cleanup_files, cleanup_library_complete, scan_all_libraries,
     scan_library, CleanupResult, MaintenanceSummary, ScanOptions,
 };
 use crate::error::{ApiResponse, AppError};
 use std::path::Path;
+use tauri::State;
 use tokio::task::spawn_blocking;
 use tracing::{error, info};
 
@@ -91,22 +93,24 @@ pub async fn scan_library_cmd(
 #[tauri::command]
 pub async fn scan_all_libraries_cmd(
     options: Option<ScanOptionsDto>,
-) -> ApiResponse<MaintenanceSummary> {
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<MaintenanceSummary>, String> {
     info!("Scanning all libraries");
 
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
     let opts = options.map(ScanOptions::from).unwrap_or_default();
 
-    let result = spawn_blocking(move || scan_all_libraries(&opts)).await;
+    let result = spawn_blocking(move || scan_all_libraries(&opts, &settings_snapshot)).await;
 
     match result {
-        Ok(Ok(summary)) => ApiResponse::success(summary),
+        Ok(Ok(summary)) => Ok(ApiResponse::success(summary)),
         Ok(Err(e)) => {
             error!("Failed to scan libraries: {}", e);
-            ApiResponse::error(e)
+            Ok(ApiResponse::error(e))
         }
         Err(e) => {
             error!("Scan task panicked: {}", e);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", e)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", e))))
         }
     }
 }
@@ -118,24 +122,27 @@ pub async fn cleanup_files_cmd(
     files: Vec<String>,
     backup: bool,
     backup_dir: Option<String>,
-) -> ApiResponse<CleanupResult> {
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<CleanupResult>, String> {
     info!("Cleaning up {} files (backup: {})", files.len(), backup);
+
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
 
     let result = spawn_blocking(move || {
         let backup_path = backup_dir.as_ref().map(|s| Path::new(s.as_str()));
-        cleanup_files(&files, backup, backup_path)
+        cleanup_files(&files, backup, backup_path, &settings_snapshot)
     })
     .await;
 
     match result {
-        Ok(Ok(cleanup_result)) => ApiResponse::success(cleanup_result),
+        Ok(Ok(cleanup_result)) => Ok(ApiResponse::success(cleanup_result)),
         Ok(Err(e)) => {
             error!("Failed to cleanup files: {}", e);
-            ApiResponse::error(e)
+            Ok(ApiResponse::error(e))
         }
         Err(e) => {
             error!("Cleanup task panicked: {}", e);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", e)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", e))))
         }
     }
 }
@@ -164,10 +171,14 @@ pub async fn cleanup_empty_folders_cmd(library_path: String) -> ApiResponse<Clea
 /// Quick scan to get an overview of issues
 /// Executed on a blocking thread.
 #[tauri::command]
-pub async fn quick_maintenance_scan_cmd() -> ApiResponse<MaintenanceSummary> {
+pub async fn quick_maintenance_scan_cmd(
+    settings: State<'_, SettingsState>,
+) -> Result<ApiResponse<MaintenanceSummary>, String> {
     info!("Quick maintenance scan");
 
-    let result = spawn_blocking(|| {
+    let settings_snapshot = settings.read().map_err(|e| format!("Settings lock poisoned: {}", e))?.clone();
+
+    let result = spawn_blocking(move || {
         let opts = ScanOptions {
             detect_duplicates: false, // Disabled for quick scan (expensive)
             detect_similar_names: false,
@@ -178,19 +189,19 @@ pub async fn quick_maintenance_scan_cmd() -> ApiResponse<MaintenanceSummary> {
             min_size_for_hash: 1024 * 1024, // 1 MB
         };
 
-        scan_all_libraries(&opts)
+        scan_all_libraries(&opts, &settings_snapshot)
     })
     .await;
 
     match result {
-        Ok(Ok(summary)) => ApiResponse::success(summary),
+        Ok(Ok(summary)) => Ok(ApiResponse::success(summary)),
         Ok(Err(e)) => {
             error!("Failed to quick scan: {}", e);
-            ApiResponse::error(e)
+            Ok(ApiResponse::error(e))
         }
         Err(e) => {
             error!("Quick scan task panicked: {}", e);
-            ApiResponse::error(AppError::Internal(format!("Task error: {}", e)))
+            Ok(ApiResponse::error(AppError::Internal(format!("Task error: {}", e))))
         }
     }
 }
