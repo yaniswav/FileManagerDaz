@@ -65,7 +65,7 @@
     left: 0;
     right: 0;
     height: 28px;
-    z-index: 9999;
+    z-index: 9997;
     display: flex;
     align-items: center;
     justify-content: space-between;

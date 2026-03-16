@@ -31,6 +31,7 @@
 
   let unlistenClose: (() => void) | null = null;
   let watcherPollInterval: ReturnType<typeof setInterval> | null = null;
+  let configPollInterval: ReturnType<typeof setInterval> | null = null;
   /** Archives pending user confirmation (for "confirm" mode) */
   let pendingConfirmArchives: { path: string; fileName: string }[] = $state([]);
 
@@ -119,7 +120,7 @@
       }, 3000);
 
       // Re-read mode periodically (every 30s) in case user changed settings
-      setInterval(async () => {
+      configPollInterval = setInterval(async () => {
         try {
           const freshConfig = await getAppConfig();
           cachedMode = freshConfig.autoImportMode || 'watch_only';
@@ -144,6 +145,7 @@
     destroyLogListeners();
     unlistenClose?.();
     if (watcherPollInterval) clearInterval(watcherPollInterval);
+    if (configPollInterval) clearInterval(configPollInterval);
   });
 
   async function handleProcessed(result: RecursiveExtractResult) {

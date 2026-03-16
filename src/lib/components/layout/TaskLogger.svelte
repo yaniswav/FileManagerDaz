@@ -71,7 +71,7 @@
     left: 0;
     right: 0;
     height: 220px;
-    z-index: 9998;
+    z-index: 9995;
     display: flex;
     flex-direction: column;
     background: var(--bg-primary, #0f0f14);

@@ -74,7 +74,7 @@
     display: flex;
     flex-direction: column-reverse;
     gap: 0.5rem;
-    z-index: 9999;
+    z-index: 9998;
     pointer-events: none;
     max-width: 400px;
   }
