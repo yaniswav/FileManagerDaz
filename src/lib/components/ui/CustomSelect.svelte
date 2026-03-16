@@ -31,10 +31,17 @@
   let triggerEl: HTMLButtonElement;
   let listEl: HTMLDivElement;
   let wrapperEl: HTMLDivElement;
+  let dropdownStyle = $state('');
 
   const selectedLabel = $derived(
     options.find(o => o.value === value)?.label ?? placeholder
   );
+
+  function positionDropdown() {
+    if (!triggerEl) return;
+    const rect = triggerEl.getBoundingClientRect();
+    dropdownStyle = `position:fixed; top:${rect.bottom + 4}px; left:${rect.left}px; min-width:${rect.width}px;`;
+  }
 
   function toggle() {
     if (disabled) return;
@@ -42,6 +49,7 @@
     if (open) {
       focusedIndex = options.findIndex(o => o.value === value);
       if (focusedIndex < 0) focusedIndex = 0;
+      positionDropdown();
     }
   }
 
@@ -98,7 +106,7 @@
   }
 
   function handleClickOutside(e: MouseEvent) {
-    if (open && wrapperEl && !wrapperEl.contains(e.target as Node)) {
+    if (open && wrapperEl && !wrapperEl.contains(e.target as Node) && (!listEl || !listEl.contains(e.target as Node))) {
       open = false;
     }
   }
@@ -136,7 +144,7 @@
   </button>
 
   {#if open}
-    <div class="select-dropdown" bind:this={listEl} role="listbox">
+    <div class="select-dropdown" bind:this={listEl} role="listbox" style={dropdownStyle}>
       {#each options as opt, i}
         <button
           type="button"
@@ -237,17 +245,13 @@
   }
 
   .select-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    min-width: 100%;
     max-height: 260px;
     overflow-y: auto;
     background: var(--bg-secondary);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 4px;
-    z-index: 999;
+    z-index: 9999;
     box-shadow:
       0 8px 32px -4px rgba(0, 0, 0, 0.6),
       0 0 0 1px rgba(255, 255, 255, 0.06);
