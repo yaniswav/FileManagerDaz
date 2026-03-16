@@ -1,13 +1,14 @@
 <script lang="ts">
   import { taskStore } from '$lib/stores/tasks.svelte';
+  import { toggleLogPanel, logStore } from '$lib/stores/tasklog.svelte';
 
-  // Derive directly from the exported $state object so Svelte 5 tracks reactivity
   let activeTask = $derived.by(() => {
     const running = taskStore.list.filter((t) => t.status === 'running');
     return running.length > 0 ? running[running.length - 1] : null;
   });
 
   let allRunningCount = $derived(taskStore.list.filter((t) => t.status === 'running').length);
+  let logCount = $derived(logStore.entries.length);
 
   // Show finished tasks briefly (success/error) when no running task
   let displayTask = $derived(activeTask ?? taskStore.list[taskStore.list.length - 1] ?? null);
@@ -17,7 +18,9 @@
   );
 </script>
 
-<footer class="status-bar">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<footer class="status-bar" onclick={toggleLogPanel}>
   {#if displayTask}
     <div class="status-left">
       {#if displayTask.status === 'running'}
@@ -47,6 +50,11 @@
     <div class="status-left">
       <span class="status-ready">Ready</span>
     </div>
+    {#if logCount > 0}
+      <div class="status-right">
+        <span class="log-indicator">{logCount} log{logCount > 1 ? 's' : ''}</span>
+      </div>
+    {/if}
   {/if}
 </footer>
 
@@ -67,6 +75,7 @@
     font-size: 0.75rem;
     color: var(--text-secondary, #a0a0a0);
     user-select: none;
+    cursor: pointer;
   }
 
   .status-left {
@@ -149,5 +158,10 @@
     color: var(--text-secondary, #a0a0a0);
     border-left: 1px solid var(--border-color, #333);
     padding-left: 8px;
+  }
+
+  .log-indicator {
+    color: var(--text-muted, #5c5c72);
+    font-size: 0.7rem;
   }
 </style>

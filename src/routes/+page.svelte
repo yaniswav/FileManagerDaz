@@ -10,7 +10,9 @@
   import Toast from '$lib/components/Toast.svelte';
   import CloseDialog from '$lib/components/CloseDialog.svelte';
   import StatusBar from '$lib/components/layout/StatusBar.svelte';
+  import TaskLogger from '$lib/components/layout/TaskLogger.svelte';
   import { initTaskListeners, destroyTaskListeners } from '$lib/stores/tasks.svelte';
+  import { initLogListeners, destroyLogListeners } from '$lib/stores/tasklog.svelte';
   import { formatFileSize, getAppConfig, pollWatchEvents, startWatching, getDownloadsFolder, scanWatchedFolder, type RecursiveExtractResult, type WatchEvent } from '$lib/api/commands';
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
@@ -78,6 +80,7 @@
   onMount(async () => {
     // Start global task event listeners
     await initTaskListeners();
+    await initLogListeners();
 
     try {
       const config = await getAppConfig();
@@ -138,6 +141,7 @@
 
   onDestroy(() => {
     destroyTaskListeners();
+    destroyLogListeners();
     unlistenClose?.();
     if (watcherPollInterval) clearInterval(watcherPollInterval);
   });
@@ -248,6 +252,7 @@
 
 <Toast />
 <CloseDialog bind:visible={showCloseDialog} />
+<TaskLogger />
 <StatusBar />
 
 <style>
