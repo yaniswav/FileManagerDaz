@@ -245,6 +245,19 @@ export default {
       title: 'Analyseur de Scène',
       description: 'Analysez un fichier .duf pour trouver les assets manquants et les produits requis.',
     },
+    downloads: {
+      title: 'Téléchargeur',
+      description: 'Téléchargez des fichiers en lot à partir d\'une liste d\'URLs.',
+    },
+    migration: {
+      title: 'Migration de bibliothèque',
+      description: 'Déplacez physiquement les produits entre vos bibliothèques et mettez à jour la base de données.',
+      source: 'Bibliothèque source',
+      destination: 'Bibliothèque de destination',
+      selectLibrary: 'Sélectionnez une bibliothèque…',
+      migrate: 'Migrer la bibliothèque',
+      hint: 'Cette fonctionnalité déplacera les fichiers sur le disque et mettra à jour toutes les références. Bientôt disponible.',
+    },
   },
 
   // Settings

@@ -58,8 +58,14 @@ export async function checkForUpdates(silent = false): Promise<void> {
 		await new Promise((r) => setTimeout(r, 1500));
 		await relaunch();
 	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		if (!silent) addToast(`Update check failed: ${msg}`, 'error');
+		if (!silent) {
+			const msg = e instanceof Error ? e.message : String(e);
+			const isNetworkError = msg.includes('endpoint') || msg.includes('fetch') || msg.includes('JSON');
+			const userMsg = isNetworkError
+				? 'Could not reach the update server. Check your connection or try again later.'
+				: `Update check failed: ${msg}`;
+			addToast(userMsg, 'error');
+		}
 	} finally {
 		checking = false;
 		downloading = false;

@@ -7,7 +7,6 @@
   import ProductsList from '$lib/components/ProductsList.svelte';
   import Settings from '$lib/components/Settings.svelte';
   import ToolsPanel from '$lib/components/tools/ToolsPanel.svelte';
-  import Downloads from '$lib/components/Downloads.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import CloseDialog from '$lib/components/CloseDialog.svelte';
   import StatusBar from '$lib/components/layout/StatusBar.svelte';
@@ -16,9 +15,9 @@
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
   import { t, initLocale } from '$lib/i18n';
-  import { checkForUpdates } from '$lib/api/updater';
+  import { checkForUpdates } from '$lib/api/updater.svelte';
 
-  let activeTab: 'extract' | 'products' | 'tools' | 'downloads' | 'settings' = $state('extract');
+  let activeTab: 'extract' | 'products' | 'tools' | 'settings' = $state('extract');
   let productsRefreshKey = $state(0);
   let showCloseDialog = $state(false);
   
@@ -100,20 +99,29 @@
         }
       }
 
-      // Start polling for watcher events (mode-aware)
+      // Cache the auto-import mode to avoid re-reading config every poll
+      let cachedMode = config.autoImportMode || 'watch_only';
+
+      // Start polling for watcher events
       watcherPollInterval = setInterval(async () => {
         try {
           const events: WatchEvent[] = await pollWatchEvents();
-          // Re-read mode in case user changed it in settings
-          const currentConfig = await getAppConfig();
-          const currentMode = currentConfig.autoImportMode || 'watch_only';
+          if (events.length === 0) return;
           for (const event of events) {
-            await handleWatcherEvent(event, currentMode);
+            await handleWatcherEvent(event, cachedMode);
           }
         } catch {
           // Watcher may not be active, ignore
         }
       }, 3000);
+
+      // Re-read mode periodically (every 30s) in case user changed settings
+      setInterval(async () => {
+        try {
+          const freshConfig = await getAppConfig();
+          cachedMode = freshConfig.autoImportMode || 'watch_only';
+        } catch { /* ignore */ }
+      }, 30000);
     } catch (e) {
       console.error('Failed to load config for i18n:', e);
       initLocale('fr');
@@ -170,12 +178,6 @@
       onclick={() => (activeTab = 'tools')}
     >
       {$t('tabs.tools')}
-    </button>
-    <button
-      class:active={activeTab === 'downloads'}
-      onclick={() => (activeTab = 'downloads')}
-    >
-      {$t('tabs.downloads')}
     </button>
     <button
       class:active={activeTab === 'settings'}
@@ -241,11 +243,6 @@
     {:else if activeTab === 'settings'}
       <Settings />
     {/if}
-
-    <!-- Downloads is always mounted, hidden via CSS to preserve download state -->
-    <div class="tab-panel" class:tab-hidden={activeTab !== 'downloads'}>
-      <Downloads />
-    </div>
   </section>
 </main>
 
@@ -373,17 +370,6 @@
     color: var(--text-secondary);
     font-family: monospace;
     opacity: 0.8;
-  }
-
-  .tab-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    flex: 1;
-  }
-
-  .tab-hidden {
-    display: none !important;
   }
 
   .pending-archives {

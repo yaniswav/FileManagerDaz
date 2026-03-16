@@ -25,7 +25,7 @@
   } from '$lib/api/commands';
   import { t, locale, setLocale, LOCALE_NAMES, type Locale } from '$lib/i18n';
   import { getVersion } from '@tauri-apps/api/app';
-  import { checkForUpdates, updaterState } from '$lib/api/updater';
+  import { checkForUpdates, updaterState } from '$lib/api/updater.svelte';
 
   let config: AppConfig | null = $state(null);
   let loading = $state(true);

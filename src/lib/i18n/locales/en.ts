@@ -244,6 +244,19 @@ export default {
       title: 'Scene Analyzer',
       description: 'Analyze a .duf scene to find missing assets and required products.',
     },
+    downloads: {
+      title: 'Downloader',
+      description: 'Batch download files from a list of URLs.',
+    },
+    migration: {
+      title: 'Library Migration',
+      description: 'Move products physically between your libraries and update the database.',
+      source: 'Source Library',
+      destination: 'Destination Library',
+      selectLibrary: 'Select a library…',
+      migrate: 'Migrate Library',
+      hint: 'This feature will move files on disk and update all database references. Coming soon.',
+    },
   },
 
   // Settings
