@@ -5,7 +5,7 @@ use crate::error::{ApiResponse, AppError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Response types
@@ -66,7 +66,7 @@ pub struct DetectionResult {
 /// Gets the complete configuration
 #[tauri::command]
 pub fn get_app_config(settings: State<'_, SettingsState>) -> ApiResponse<AppConfig> {
-    info!("get_app_config");
+    debug!("get_app_config");
 
     match settings.read() {
         Ok(settings) => {
