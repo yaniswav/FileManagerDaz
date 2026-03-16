@@ -270,6 +270,10 @@ export default {
       french: 'Français',
       english: 'English',
     },
+    theme: {
+      title: 'Thème',
+      description: "Choisissez le thème de l'application",
+    },
     libraries: {
       title: 'Bibliothèques DAZ',
       description: 'Gérez vos bibliothèques de contenus DAZ 3D',

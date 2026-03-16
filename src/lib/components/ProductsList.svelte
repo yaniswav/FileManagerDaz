@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { t } from '$lib/i18n';
+  import { notify } from '$lib/stores/notifications';
   import {
     listDazLibraries,
     listLibraryProductsPaginated,
@@ -67,6 +68,10 @@
   let uninstallTarget: Product | null = $state(null);
   let lastClickedIndex: number | null = $state(null);
 
+  // 2D keyboard navigation
+  let focusedIndex: number = $state(-1);
+  let gridEl: HTMLDivElement | undefined = $state(undefined);
+
   // Collections
   let collections: Collection[] = $state([]);
   let collectionFilter: string = $state('all');
@@ -106,6 +111,26 @@
     lastClickedIndex = null;
   }
 
+  /** Calculate the number of columns in the CSS grid based on actual rendered width */
+  function getGridColumns(): number {
+    if (!gridEl || gridEl.children.length === 0) return 1;
+    const firstCard = gridEl.children[0] as HTMLElement;
+    const gridWidth = gridEl.clientWidth;
+    const cardWidth = firstCard.offsetWidth;
+    if (cardWidth === 0) return 1;
+    // Account for gap
+    const style = getComputedStyle(gridEl);
+    const gap = parseFloat(style.columnGap || style.gap || '0');
+    return Math.max(1, Math.round((gridWidth + gap) / (cardWidth + gap)));
+  }
+
+  /** Scroll a card into the visible area of the grid container */
+  function scrollCardIntoView(index: number) {
+    if (!gridEl || index < 0 || index >= gridEl.children.length) return;
+    const card = gridEl.children[index] as HTMLElement;
+    card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
   let debounceTimer: number | null = null;
   let requestId = 0;
   let unlistenTaskEnd: UnlistenFn | null = null;
@@ -122,7 +147,9 @@
       scanning = false;
       if (event.payload.status === 'error') {
         error = event.payload.message;
+        notify.error($t('products.scanLibraries'), event.payload.message);
       } else {
+        notify.success($t('products.scanLibraries'), event.payload.message);
         void loadVendors(); // refresh vendor list after scan
         resetAndReload();
       }
@@ -141,9 +168,46 @@
         e.preventDefault();
         selectAll();
       }
-      // Escape: clear selection
-      if (e.key === 'Escape' && selectedIds.size > 0) {
-        deselectAll();
+      // Escape: clear selection and focus
+      if (e.key === 'Escape') {
+        if (selectedIds.size > 0) deselectAll();
+        focusedIndex = -1;
+      }
+
+      // 2D grid navigation (arrows, Enter, Delete)
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Delete'].includes(e.key)) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (products.length === 0) return;
+
+        if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < products.length) {
+          e.preventDefault();
+          selectedProduct = products[focusedIndex];
+          return;
+        }
+        if (e.key === 'Delete' && focusedIndex >= 0 && focusedIndex < products.length) {
+          e.preventDefault();
+          uninstallTarget = products[focusedIndex];
+          return;
+        }
+
+        // Calculate columns from actual grid width
+        const cols = getGridColumns();
+        let next = focusedIndex;
+
+        if (e.key === 'ArrowRight') next = Math.min(focusedIndex + 1, products.length - 1);
+        else if (e.key === 'ArrowLeft') next = Math.max(focusedIndex - 1, 0);
+        else if (e.key === 'ArrowDown') next = Math.min(focusedIndex + cols, products.length - 1);
+        else if (e.key === 'ArrowUp') next = Math.max(focusedIndex - cols, 0);
+
+        if (next < 0) next = 0;
+        if (next !== focusedIndex) {
+          e.preventDefault();
+          focusedIndex = next;
+          selectedIds = new Set([products[next].id]);
+          lastClickedIndex = next;
+          scrollCardIntoView(next);
+        }
       }
     };
     document.addEventListener('keydown', handleKeydown);
@@ -486,12 +550,13 @@
       {/if}
     </div>
   {:else}
-    <div class="products-grid">
-      {#each products as product (product.id)}
+    <div class="products-grid" bind:this={gridEl}>
+      {#each products as product, i (product.id)}
         <ProductCard
           {product}
           libraryName={libraryNameByPath.get(product.libraryPath ?? '') ?? null}
           selected={selectedIds.has(product.id)}
+          focused={focusedIndex === i}
           ondelete={handleDelete}
           onedit={(p) => (selectedProduct = p)}
           onuninstall={(p) => (uninstallTarget = p)}

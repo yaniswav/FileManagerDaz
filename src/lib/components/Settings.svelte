@@ -24,6 +24,7 @@
     type DazLibrary,
   } from '$lib/api/commands';
   import { t, locale, setLocale, LOCALE_NAMES, type Locale } from '$lib/i18n';
+  import { themeState, setTheme, THEMES, THEME_LABELS, type Theme } from '$lib/stores/theme.svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { checkForUpdates, updaterState } from '$lib/api/updater.svelte';
 
@@ -330,6 +331,32 @@
           >
             {LOCALE_NAMES.en}
           </button>
+          <button class="pill pill-stub" disabled title="Coming soon">日本語</button>
+          <button class="pill pill-stub" disabled title="Coming soon">한국어</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ THEME ═══ -->
+    <section class="settings-card">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">🎨</span>
+          <h2>{$t('settings.theme.title')}</h2>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="card-description">{$t('settings.theme.description')}</p>
+        <div class="theme-segmented">
+          {#each THEMES as theme}
+            <button
+              class="segment"
+              class:segment-active={themeState.current === theme}
+              onclick={() => setTheme(theme)}
+            >
+              <span class="segment-label">{THEME_LABELS[theme]}</span>
+            </button>
+          {/each}
         </div>
       </div>
     </section>
@@ -747,14 +774,14 @@
   /* ═══ Card ═══ */
   .settings-card {
     background: var(--bg-secondary);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--surface-border);
     border-radius: 14px;
     overflow: hidden;
     transition: border-color 0.2s;
   }
 
   .settings-card:hover {
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color: var(--border-color);
   }
 
   .card-header {
@@ -762,20 +789,20 @@
     justify-content: space-between;
     align-items: center;
     padding: 1rem 1.25rem;
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: var(--surface-glass);
+    border-bottom: 1px solid var(--surface-border);
   }
 
   .card-header-collapsible {
     width: 100%;
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.02) !important;
+    background: var(--surface-glass) !important;
     border-radius: 0 !important;
     text-align: left;
   }
 
   .card-header-collapsible:hover {
-    background: rgba(255, 255, 255, 0.04) !important;
+    background: var(--surface-elevated) !important;
   }
 
   .card-title {
@@ -947,6 +974,47 @@
     cursor: not-allowed;
   }
 
+  .pill-stub {
+    opacity: 0.35;
+    font-size: 0.85rem;
+    border: 2px dashed var(--border-color) !important;
+    background: transparent !important;
+  }
+
+  /* ═══ Theme Segmented Control ═══ */
+  .theme-segmented {
+    display: flex;
+    background: var(--bg-primary);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+    border: 1px solid var(--border-color);
+  }
+
+  .segment {
+    flex: 1;
+    padding: 0.55rem 0.75rem;
+    background: transparent !important;
+    border: 2px solid transparent !important;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .segment:hover:not(.segment-active) {
+    background: var(--bg-hover) !important;
+    color: var(--text-primary);
+  }
+
+  .segment-active {
+    background: var(--accent) !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(233, 69, 96, 0.3);
+  }
+
   /* ═══ Libraries ═══ */
   .library-grid {
     display: flex;
@@ -963,7 +1031,7 @@
   }
 
   .library-card:hover {
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color: var(--border-color);
   }
 
   .library-missing {
@@ -1090,7 +1158,7 @@
   }
 
   .toggle-row:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--surface-glass);
   }
 
   .toggle-info {
@@ -1213,7 +1281,7 @@
   /* ═══ Divider ═══ */
   .divider {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--border-color);
     margin: 0.25rem 0;
   }
 
@@ -1285,7 +1353,7 @@
   /* ═══ Dev Card ═══ */
   .dev-card {
     border-style: dashed;
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--border-color);
     opacity: 0.85;
   }
 

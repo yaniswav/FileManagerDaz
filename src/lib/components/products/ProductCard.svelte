@@ -9,13 +9,14 @@
     product: Product;
     libraryName?: string | null;
     selected?: boolean;
+    focused?: boolean;
     ondelete?: (id: number) => void;
     onedit?: (product: Product) => void;
     onuninstall?: (product: Product) => void;
     onselect?: (id: number, event: MouseEvent) => void;
   }
 
-  let { product, libraryName = null, selected = false, ondelete, onedit, onuninstall, onselect }: Props = $props();
+  let { product, libraryName = null, selected = false, focused = false, ondelete, onedit, onuninstall, onselect }: Props = $props();
 
   let showMenu = $state(false);
   let imgFailed = $state(false);
@@ -98,6 +99,7 @@
 <div
   class="card"
   class:selected
+  class:focused
   onmouseleave={() => (showMenu = false)}
   onclick={(e: MouseEvent) => {
     // Don't trigger selection if clicking on menu/actions
@@ -256,6 +258,12 @@
     align-items: center;
     justify-content: center;
     pointer-events: none;
+  }
+
+  .card.focused {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px var(--accent-glow, rgba(233, 69, 96, 0.25));
   }
 
   /* ---- Thumbnail ---- */

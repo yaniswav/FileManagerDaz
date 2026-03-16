@@ -13,6 +13,7 @@
   import TaskLogger from '$lib/components/layout/TaskLogger.svelte';
   import { initTaskListeners, destroyTaskListeners } from '$lib/stores/tasks.svelte';
   import { initLogListeners, destroyLogListeners } from '$lib/stores/tasklog.svelte';
+  import { initTheme, destroyTheme } from '$lib/stores/theme.svelte';
   import { formatFileSize, getAppConfig, pollWatchEvents, startWatching, getDownloadsFolder, scanWatchedFolder, type RecursiveExtractResult, type WatchEvent } from '$lib/api/commands';
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
@@ -82,6 +83,7 @@
     // Start global task event listeners
     await initTaskListeners();
     await initLogListeners();
+    initTheme();
 
     try {
       const config = await getAppConfig();
@@ -143,6 +145,7 @@
   onDestroy(() => {
     destroyTaskListeners();
     destroyLogListeners();
+    destroyTheme();
     unlistenClose?.();
     if (watcherPollInterval) clearInterval(watcherPollInterval);
     if (configPollInterval) clearInterval(configPollInterval);
