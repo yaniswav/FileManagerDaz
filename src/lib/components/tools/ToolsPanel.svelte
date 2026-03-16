@@ -96,7 +96,7 @@
 
   .tools-body {
     display: grid;
-    grid-template-columns: 200px 1fr;
+    grid-template-columns: 210px 1fr;
     gap: 0;
     flex: 1;
     min-height: 0;
@@ -106,92 +106,114 @@
   .tools-nav {
     display: flex;
     flex-direction: column;
-    gap: 0;
-    padding: 0.75rem 0;
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    gap: 1px;
+    padding: 1rem 0.5rem;
+    border-right: 1px solid var(--surface-border);
   }
 
   .nav-label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-secondary);
-    opacity: 0.5;
-    padding: 0 1rem 0.65rem;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    padding: 0 0.75rem 0.75rem;
   }
 
   .tools-nav button {
     background: transparent;
     color: var(--text-secondary);
     border: none;
-    border-left: 2px solid transparent;
-    border-radius: 0;
-    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
     cursor: pointer;
     text-align: left;
     font-size: 0.82rem;
     font-weight: 400;
     letter-spacing: -0.01em;
-    transition: color 0.12s ease, border-color 0.12s ease;
     line-height: 1.4;
+    position: relative;
+    transition: all var(--duration-normal) var(--ease-out);
+  }
+
+  .tools-nav button::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%) scaleY(0);
+    width: 2px;
+    height: 60%;
+    border-radius: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+    transition: transform var(--duration-normal) var(--ease-spring);
   }
 
   .tools-nav button:hover {
     color: var(--text-primary);
+    background: var(--surface-glass);
+    transform: translateX(2px);
+    box-shadow: none;
   }
 
   .tools-nav button.active {
     color: #fff;
     font-weight: 500;
-    border-left-color: var(--accent);
+    background: var(--surface-elevated);
+  }
+
+  .tools-nav button.active::before {
+    transform: translateY(-50%) scaleY(1);
   }
 
   /* ── Content ── */
   .tools-content {
-    padding: 1.5rem 2rem;
+    padding: 2rem;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.25rem;
     min-width: 0;
     overflow-y: auto;
   }
 
-  /* ── Action buttons inside child tools ── */
+  /* ── Child tool buttons ── */
   .tools-content :global(button:not([role="tab"])) {
     border-radius: 6px;
-    transition: filter 0.15s ease;
+    transition: all var(--duration-normal) var(--ease-out);
   }
 
-  .tools-content :global(button:not([role="tab"]):hover) {
-    filter: brightness(1.12);
+  .tools-content :global(button:not([role="tab"]):hover:not(:disabled)) {
+    transform: translateY(-1px) scale(1.01);
+    box-shadow: 0 4px 12px -2px var(--accent-glow);
   }
 
-  .tools-content :global(button:not([role="tab"]):active) {
-    filter: brightness(0.92);
+  .tools-content :global(button:not([role="tab"]):active:not(:disabled)) {
+    transform: translateY(0) scale(0.99);
+    box-shadow: none;
   }
 
   /* ── Library Migration ── */
   .migration {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
-    max-width: 520px;
+    gap: 1.75rem;
+    max-width: 560px;
   }
 
   .migration-header h4 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 600;
     color: var(--text-primary);
     letter-spacing: -0.02em;
   }
 
   .migration-header p {
-    margin: 0.35rem 0 0;
+    margin: 0.4rem 0 0;
     color: var(--text-secondary);
     font-size: 0.82rem;
-    line-height: 1.55;
+    line-height: 1.6;
   }
 
   .migration-form {
@@ -203,64 +225,66 @@
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.4rem;
     flex: 1;
   }
 
   .field-label {
-    font-size: 0.72rem;
-    font-weight: 500;
+    font-size: 0.7rem;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-secondary);
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
   }
 
   .migration select {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--surface-glass);
     color: var(--text-primary);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--surface-border);
     border-radius: 6px;
     padding: 0.55rem 0.75rem;
     font-size: 0.82rem;
     cursor: pointer;
     appearance: none;
     width: 100%;
-    transition: border-color 0.15s ease;
+    transition: all var(--duration-fast) var(--ease-out);
+  }
+
+  .migration select:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: var(--surface-elevated);
   }
 
   .migration select:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
   }
 
   .arrow {
-    color: var(--text-secondary);
-    opacity: 0.4;
+    color: var(--text-muted);
     font-size: 1.1rem;
     padding-bottom: 0.55rem;
     flex-shrink: 0;
   }
 
   .btn-migrate {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 0.6rem 1.25rem;
-    font-size: 0.82rem;
-    font-weight: 500;
-    cursor: not-allowed;
-    opacity: 0.45;
     align-self: flex-start;
-    transition: opacity 0.15s ease;
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .btn-migrate:hover {
+    transform: none;
+    box-shadow: none;
   }
 
   .migration-hint {
     font-size: 0.72rem;
-    color: var(--text-secondary);
-    opacity: 0.5;
+    color: var(--text-muted);
     font-style: italic;
     margin: 0;
+    line-height: 1.6;
   }
 
   /* ── Responsive ── */
@@ -273,9 +297,9 @@
       flex-direction: row;
       overflow-x: auto;
       border-right: none;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      padding: 0 0.5rem;
-      gap: 0;
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.25rem 0.5rem;
+      gap: 2px;
     }
 
     .nav-label {
@@ -283,19 +307,30 @@
     }
 
     .tools-nav button {
-      border-left: none;
-      border-bottom: 2px solid transparent;
       white-space: nowrap;
-      padding: 0.6rem 0.85rem;
+      padding: 0.55rem 0.85rem;
       font-size: 0.78rem;
     }
 
-    .tools-nav button.active {
-      border-bottom-color: var(--accent);
+    .tools-nav button::before {
+      left: 50%;
+      top: auto;
+      bottom: 0;
+      transform: translateX(-50%) scaleX(0);
+      width: 60%;
+      height: 2px;
+    }
+
+    .tools-nav button.active::before {
+      transform: translateX(-50%) scaleX(1);
+    }
+
+    .tools-nav button:hover {
+      transform: none;
     }
 
     .tools-content {
-      padding: 1.25rem;
+      padding: 1.5rem;
     }
 
     .migration-form {
