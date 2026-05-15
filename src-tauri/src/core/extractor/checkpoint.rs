@@ -102,10 +102,10 @@ impl Checkpoint {
     /// Save checkpoint to disk
     pub fn save(&self, checkpoint_dir: &Path) -> AppResult<()> {
         fs::create_dir_all(checkpoint_dir).map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create checkpoint dir: {}", e),
-            ))
+            AppError::Io(std::io::Error::other(format!(
+                "Failed to create checkpoint dir: {}",
+                e
+            )))
         })?;
 
         let checkpoint_file = checkpoint_dir.join(format!("{}.json", self.session_id));
@@ -113,10 +113,10 @@ impl Checkpoint {
             .map_err(|e| AppError::Internal(format!("Failed to serialize checkpoint: {}", e)))?;
 
         fs::write(&checkpoint_file, json).map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write checkpoint: {}", e),
-            ))
+            AppError::Io(std::io::Error::other(format!(
+                "Failed to write checkpoint: {}",
+                e
+            )))
         })?;
 
         info!(
@@ -137,10 +137,10 @@ impl Checkpoint {
         }
 
         let json = fs::read_to_string(&checkpoint_file).map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read checkpoint: {}", e),
-            ))
+            AppError::Io(std::io::Error::other(format!(
+                "Failed to read checkpoint: {}",
+                e
+            )))
         })?;
 
         let checkpoint: Checkpoint = serde_json::from_str(&json)
@@ -156,16 +156,18 @@ impl Checkpoint {
     }
 
     /// Find latest checkpoint in directory
+    // kept as public API for external integrations (recovery flows)
+    #[allow(dead_code)]
     pub fn find_latest(checkpoint_dir: &Path) -> AppResult<Option<Self>> {
         if !checkpoint_dir.exists() {
             return Ok(None);
         }
 
         let entries = fs::read_dir(checkpoint_dir).map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read checkpoint dir: {}", e),
-            ))
+            AppError::Io(std::io::Error::other(format!(
+                "Failed to read checkpoint dir: {}",
+                e
+            )))
         })?;
 
         let mut checkpoints = Vec::new();
@@ -198,10 +200,10 @@ impl Checkpoint {
 
         if checkpoint_file.exists() {
             fs::remove_file(&checkpoint_file).map_err(|e| {
-                AppError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to delete checkpoint: {}", e),
-                ))
+                AppError::Io(std::io::Error::other(format!(
+                    "Failed to delete checkpoint: {}",
+                    e
+                )))
             })?;
             info!("Checkpoint deleted: {}", self.session_id);
         }
@@ -274,10 +276,10 @@ pub fn cleanup_extracted_folders(temp_dir: &Path) -> AppResult<usize> {
     info!("Cleaning up extracted folders in {:?}", temp_dir);
 
     let entries = fs::read_dir(temp_dir).map_err(|e| {
-        AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to read temp dir: {}", e),
-        ))
+        AppError::Io(std::io::Error::other(format!(
+            "Failed to read temp dir: {}",
+            e
+        )))
     })?;
 
     let mut cleaned = 0;

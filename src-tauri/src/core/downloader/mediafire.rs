@@ -88,12 +88,8 @@ pub async fn resolve_mediafire_url(url: &str, timeout_secs: u64) -> AppResult<St
 
 #[cfg(test)]
 mod tests {
-    // MediaFire tests require network access, so we only test URL classification
-    use super::*;
-
+    // MediaFire tests require network access; keep the module compiled in
+    // test builds without making a tautological assertion on a const string.
     #[test]
-    fn test_module_compiles() {
-        // Ensures the module compiles without issues
-        assert_eq!(USER_AGENT.len() > 0, true);
-    }
+    fn test_module_compiles() {}
 }

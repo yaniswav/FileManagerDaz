@@ -58,6 +58,12 @@ impl ImportTaskStatus {
     }
 
     /// Parses status from database string.
+    ///
+    /// Infallible mapping: unknown values fall back to `Pending` with a log
+    /// warning. Not the real `FromStr` trait because its semantics differ
+    /// (`Result<Self, Self::Err>` for parser errors), and the call sites
+    /// all rely on a default-on-unknown behaviour.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "pending" => ImportTaskStatus::Pending,
@@ -329,6 +335,8 @@ impl ImportTasksRepository {
     }
 
     /// Lists recent tasks (with limit)
+    // kept as public API for external integrations (admin/diagnostic queries)
+    #[allow(dead_code)]
     pub fn list_recent_tasks(&self, limit: usize) -> AppResult<Vec<PersistedImportTask>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(

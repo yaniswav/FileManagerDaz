@@ -3,7 +3,7 @@
 use crate::db::models::{Collection, DuplicateGroup, LibraryProductInput, LibraryStats, NewProduct, Product, TypeCount, UpdateProduct, VendorCount};
 use crate::error::{AppError, AppResult};
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 use std::path::Path;
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -492,6 +492,10 @@ impl Database {
 
     /// Lists library products with server-side pagination and filtering.
     /// All filtering, sorting, and pagination is done in SQLite.
+    // Stable DB API signature mirrored by the Tauri command above; folding
+    // the parameters into a struct would require coordinated changes on
+    // both sides.
+    #[allow(clippy::too_many_arguments)]
     pub fn list_library_products_paginated(
         &self,
         limit: i64,
@@ -827,16 +831,27 @@ impl Database {
         if product_ids.is_empty() {
             return Ok(0);
         }
+        // Chunked to stay well under SQLite's host-parameter limit (defaults to 999
+        // on older builds, 32766 since 3.32). 500 rows × 3 params = 1500 — safe on
+        // bundled rusqlite, with comfortable margin if a stripped build is ever used.
+        const CHUNK_SIZE: usize = 500;
         self.with_connection(|conn| {
             let now = Utc::now().to_rfc3339();
             let tx = conn.unchecked_transaction()?;
             let mut added = 0usize;
-            for &pid in product_ids {
-                let r = tx.execute(
-                    "INSERT OR IGNORE INTO collection_items (collection_id, product_id, added_at) VALUES (?1, ?2, ?3)",
-                    params![collection_id, pid, now],
-                )?;
-                added += r;
+            for chunk in product_ids.chunks(CHUNK_SIZE) {
+                let placeholders = vec!["(?, ?, ?)"; chunk.len()].join(", ");
+                let sql = format!(
+                    "INSERT OR IGNORE INTO collection_items (collection_id, product_id, added_at) VALUES {}",
+                    placeholders
+                );
+                let mut sqlite_params: Vec<Value> = Vec::with_capacity(chunk.len() * 3);
+                for pid in chunk {
+                    sqlite_params.push(Value::Integer(collection_id));
+                    sqlite_params.push(Value::Integer(*pid));
+                    sqlite_params.push(Value::Text(now.clone()));
+                }
+                added += tx.execute(&sql, params_from_iter(sqlite_params))?;
             }
             // Bump updated_at
             tx.execute(
@@ -854,15 +869,22 @@ impl Database {
         if product_ids.is_empty() {
             return Ok(0);
         }
+        const CHUNK_SIZE: usize = 500;
         self.with_connection(|conn| {
             let tx = conn.unchecked_transaction()?;
             let mut removed = 0usize;
-            for &pid in product_ids {
-                let r = tx.execute(
-                    "DELETE FROM collection_items WHERE collection_id = ?1 AND product_id = ?2",
-                    params![collection_id, pid],
-                )?;
-                removed += r;
+            for chunk in product_ids.chunks(CHUNK_SIZE) {
+                let placeholders = vec!["?"; chunk.len()].join(", ");
+                let sql = format!(
+                    "DELETE FROM collection_items WHERE collection_id = ? AND product_id IN ({})",
+                    placeholders
+                );
+                let mut sqlite_params: Vec<Value> = Vec::with_capacity(chunk.len() + 1);
+                sqlite_params.push(Value::Integer(collection_id));
+                for pid in chunk {
+                    sqlite_params.push(Value::Integer(*pid));
+                }
+                removed += tx.execute(&sql, params_from_iter(sqlite_params))?;
             }
             let now = Utc::now().to_rfc3339();
             tx.execute(

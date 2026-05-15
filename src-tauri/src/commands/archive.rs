@@ -590,7 +590,7 @@ impl DestinationProposalFront {
             library_path: library_path.clone(),
             subfolders: backend
                 .relative_path
-                .split(|c| c == '/' || c == '\\')
+                .split(['/', '\\'])
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string())
                 .collect(),

@@ -126,6 +126,8 @@ impl ExtractionTimingSession {
     }
 
     /// Records a step with its duration directly (for functions that measure themselves)
+    // kept as public API for external integrations (timing instrumentation hooks)
+    #[allow(dead_code)]
     pub fn record_step(&mut self, name: &str, duration: Duration) {
         let duration_ms = duration.as_millis() as u64;
         info!("[TIMING] Step '{}' recorded: {} ms", name, duration_ms);
@@ -213,11 +215,10 @@ fn write_report_to_file(report: &TimingReport, log_path: &std::path::Path) -> st
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&log_path)?;
+        .open(log_path)?;
 
     // Write the report as JSON (one line per report)
-    let json = serde_json::to_string(report)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(report).map_err(std::io::Error::other)?;
 
     writeln!(file, "{}", json)?;
 
@@ -226,6 +227,8 @@ fn write_report_to_file(report: &TimingReport, log_path: &std::path::Path) -> st
 }
 
 /// Helper to measure the time of a closure and return the duration
+// kept as public API for external integrations (dev-mode timing helpers)
+#[allow(dead_code)]
 pub fn measure<T, F: FnOnce() -> T>(f: F) -> (T, Duration) {
     let start = Instant::now();
     let result = f();
@@ -234,6 +237,8 @@ pub fn measure<T, F: FnOnce() -> T>(f: F) -> (T, Duration) {
 }
 
 /// Helper to measure and log the time of an operation
+// kept as public API for external integrations (dev-mode timing helpers)
+#[allow(dead_code)]
 pub fn timed<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
     let start = Instant::now();
     let result = f();

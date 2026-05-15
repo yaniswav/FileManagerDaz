@@ -3,7 +3,7 @@
 //! Scans `Runtime/Support/*.dsx` metadata files and extracts product data:
 //! name, vendor, content types, categories, assets, and support assets.
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::HashSet;
@@ -63,7 +63,7 @@ pub fn list_support_metadata_files(library_path: &Path) -> AppResult<Vec<PathBuf
         }
 
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()).map_or(true, |e| !e.eq_ignore_ascii_case("dsx")) {
+        if path.extension().and_then(|e| e.to_str()).is_none_or(|e| !e.eq_ignore_ascii_case("dsx")) {
             continue;
         }
 

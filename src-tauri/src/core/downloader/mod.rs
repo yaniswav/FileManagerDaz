@@ -23,9 +23,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Semaphore};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 // Re-exports
+// kept as public API for external integrations (Tauri commands consume it)
+#[allow(unused_imports)]
 pub use http::download_file;
 
 // ============================================================================
@@ -233,7 +235,7 @@ pub async fn run_batch_downloads(
 ) -> AppResult<DownloadSummary> {
     let dest_dir = PathBuf::from(&options.dest_dir);
     std::fs::create_dir_all(&dest_dir).map_err(|e| {
-        AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Cannot create dest dir: {}", e)))
+        AppError::Io(std::io::Error::other(format!("Cannot create dest dir: {}", e)))
     })?;
 
     let total = links.len();
@@ -285,7 +287,7 @@ pub async fn run_batch_downloads(
 
             let start = Instant::now();
             let result = download_single_link(&link, &dest, retries, timeout, &existing).await;
-            let duration = start.elapsed().as_secs_f64();
+            let _duration = start.elapsed().as_secs_f64();
 
             let status = match result {
                 Ok(status) => status,

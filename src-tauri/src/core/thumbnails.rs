@@ -120,10 +120,8 @@ pub fn find_best_thumbnail(
             score += 1;
         }
 
-        if score > 0 {
-            if best_keyword.as_ref().map_or(true, |(s, _)| score > *s) {
-                best_keyword = Some((score, img));
-            }
+        if score > 0 && best_keyword.as_ref().is_none_or(|(s, _)| score > *s) {
+            best_keyword = Some((score, img));
         }
     }
 

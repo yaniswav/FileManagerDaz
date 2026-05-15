@@ -214,10 +214,10 @@ fn find_archives_at_root(dir: &Path) -> AppResult<Vec<PathBuf>> {
 
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if entry.file_type()?.is_file() {
-            if ArchiveFormat::from_extension(&entry.path()).is_some() {
-                archives.push(entry.path());
-            }
+        if entry.file_type()?.is_file()
+            && ArchiveFormat::from_extension(&entry.path()).is_some()
+        {
+            archives.push(entry.path());
         }
     }
 
@@ -355,10 +355,11 @@ fn has_duf_files_recursive(dir: &Path, remaining_depth: u32) -> bool {
                         return true;
                     }
                 }
-            } else if path.is_dir() && remaining_depth > 0 {
-                if has_duf_files_recursive(&path, remaining_depth - 1) {
-                    return true;
-                }
+            } else if path.is_dir()
+                && remaining_depth > 0
+                && has_duf_files_recursive(&path, remaining_depth - 1)
+            {
+                return true;
             }
         }
     }
@@ -504,4 +505,150 @@ fn move_loose_daz_files(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the destructive batch-normalization helpers.
+    //!
+    //! The primary risk flagged by the audit is `extract_archives_parallel`,
+    //! which deletes source archives after extraction. We pin its contract:
+    //! a successful extraction removes the source, a failed one keeps it
+    //! and records an error.
+
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    /// Writes a small, valid zip that drops a single text file when extracted.
+    fn write_test_zip(path: &Path) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("payload.txt", opts).unwrap();
+        zip.write_all(b"daz").unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn touch(path: &Path) {
+        if let Some(p) = path.parent() {
+            fs::create_dir_all(p).unwrap();
+        }
+        fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn find_archives_at_root_filters_non_archive_files_and_dirs() {
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("a.zip"));
+        touch(&tmp.path().join("readme.txt"));
+        touch(&tmp.path().join("promo.jpg"));
+        fs::create_dir_all(tmp.path().join("subdir")).unwrap();
+        touch(&tmp.path().join("subdir/inside.zip")); // must NOT be picked (non-recursive)
+
+        let archives = find_archives_at_root(tmp.path()).unwrap();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].file_name().unwrap(), "a.zip");
+    }
+
+    #[test]
+    fn has_daz_content_detects_standard_folders() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!has_daz_content(tmp.path()), "empty dir is not DAZ content");
+
+        fs::create_dir_all(tmp.path().join("data")).unwrap();
+        assert!(has_daz_content(tmp.path()), "presence of `data/` is enough");
+    }
+
+    #[test]
+    fn has_duf_files_respects_depth_limit() {
+        let tmp = TempDir::new().unwrap();
+        // depth 0 — direct file
+        touch(&tmp.path().join("root.duf"));
+        assert!(has_duf_files(tmp.path()));
+
+        // Fresh tree at depth > 2 should NOT trip the limit (max_depth = 2).
+        let deep = TempDir::new().unwrap();
+        let very_deep = deep.path().join("a/b/c/d");
+        fs::create_dir_all(&very_deep).unwrap();
+        touch(&very_deep.join("hidden.duf")); // depth 4 from root
+        assert!(
+            !has_duf_files(deep.path()),
+            "depth 4 is beyond the recursion budget"
+        );
+    }
+
+    #[test]
+    fn categorize_files_separates_daz_keep_and_promo() {
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("scene.duf"));
+        touch(&tmp.path().join("model.dsf"));
+        touch(&tmp.path().join("promo.jpg")); // promo, dropped
+        touch(&tmp.path().join("README.txt")); // promo extension but KEEP_FILES → dropped from promo
+        touch(&tmp.path().join("LICENSE.txt")); // same logic — kept out of promo
+        fs::create_dir_all(tmp.path().join("sub")).unwrap();
+
+        let (daz, promo) = categorize_files_at_root(tmp.path()).unwrap();
+        assert_eq!(daz.len(), 2, "duf + dsf are DAZ files");
+        // README and LICENSE are excluded from promo because they hit KEEP_FILES;
+        // only `promo.jpg` should remain as a promo.
+        assert_eq!(promo.len(), 1);
+        assert_eq!(promo[0].file_name().unwrap(), "promo.jpg");
+    }
+
+    #[test]
+    fn extract_archives_parallel_removes_source_after_success() {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("ok.zip");
+        write_test_zip(&archive);
+
+        let mut errors = Vec::new();
+        let settings = AppSettings::default();
+        let count = extract_archives_parallel(
+            std::slice::from_ref(&archive),
+            tmp.path(),
+            &mut errors,
+            &settings,
+        )
+        .unwrap();
+
+        assert_eq!(count, 1, "exactly one archive should be reported extracted");
+        assert!(errors.is_empty(), "no error expected on a valid zip");
+        assert!(
+            !archive.exists(),
+            "source archive must be removed after a successful extraction"
+        );
+        assert!(
+            tmp.path().join("ok/payload.txt").exists(),
+            "payload should land in `<archive_stem>/`"
+        );
+    }
+
+    #[test]
+    fn extract_archives_parallel_keeps_source_on_failure() {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("bad.zip");
+        // Garbage with a .zip extension — extract_archive_by_format must fail.
+        fs::write(&archive, b"this is not a zip").unwrap();
+
+        let mut errors = Vec::new();
+        let settings = AppSettings::default();
+        let count = extract_archives_parallel(
+            std::slice::from_ref(&archive),
+            tmp.path(),
+            &mut errors,
+            &settings,
+        )
+        .unwrap();
+
+        assert_eq!(count, 0, "nothing should be reported extracted");
+        assert_eq!(errors.len(), 1, "failure must be recorded in errors");
+        assert!(errors[0].starts_with("bad.zip:"), "error must be tagged with the archive name");
+        assert!(
+            archive.exists(),
+            "source archive MUST be preserved when extraction fails — this is the audit's I5 invariant"
+        );
+    }
 }

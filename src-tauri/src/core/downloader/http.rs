@@ -17,7 +17,6 @@ use tracing::{debug, info, warn};
 
 const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const CHUNK_SIZE: usize = 2 * 1024 * 1024; // 2 MB
 
 /// Download a file via HTTP with resume support.
 ///
@@ -69,7 +68,7 @@ async fn try_download(
     existing_files: &HashSet<String>,
 ) -> AppResult<DownloadStatus> {
     let safe_name = suggested_name
-        .map(|n| sanitize_filename(n))
+        .map(sanitize_filename)
         .unwrap_or_else(|| filename_from_url(url).unwrap_or_else(|| format!("{}.bin", uuid::Uuid::new_v4())));
 
     let part_path = dest_dir.join(format!("{}.part", safe_name));
@@ -163,9 +162,9 @@ async fn try_download(
             std::fs::OpenOptions::new()
                 .append(true)
                 .open(&part_path)
-                .map_err(|e| AppError::Io(e))?
+                .map_err(AppError::Io)?
         } else {
-            std::fs::File::create(&part_path).map_err(|e| AppError::Io(e))?
+            std::fs::File::create(&part_path).map_err(AppError::Io)?
         };
 
         let mut stream = resp.bytes_stream();
@@ -176,11 +175,11 @@ async fn try_download(
             let chunk = chunk.map_err(|e| {
                 AppError::Config(format!("Download stream error: {}", e))
             })?;
-            file.write_all(&chunk).map_err(|e| AppError::Io(e))?;
+            file.write_all(&chunk).map_err(AppError::Io)?;
             downloaded += chunk.len() as u64;
         }
 
-        file.flush().map_err(|e| AppError::Io(e))?;
+        file.flush().map_err(AppError::Io)?;
 
         // Validate download completeness
         if let Some(expected) = total_size {
@@ -200,7 +199,7 @@ async fn try_download(
 
     // Finalize: rename .part → final name
     let final_path = ensure_unique(dest_dir.join(&final_name));
-    std::fs::rename(&part_path, &final_path).map_err(|e| AppError::Io(e))?;
+    std::fs::rename(&part_path, &final_path).map_err(AppError::Io)?;
 
     // Verify it's not an HTML error page
     if is_html_file(&final_path) {
@@ -418,7 +417,7 @@ mod tests {
         assert!(is_html_file(&html_path));
 
         let zip_path = dir.path().join("data.bin");
-        std::fs::write(&zip_path, &[0u8; 100]).unwrap();
+        std::fs::write(&zip_path, [0u8; 100]).unwrap();
         assert!(!is_html_file(&zip_path));
     }
 }

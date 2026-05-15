@@ -44,6 +44,12 @@ pub struct ImportTasksState {
     repository: Mutex<Option<ImportTasksRepository>>,
 }
 
+impl Default for ImportTasksState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImportTasksState {
     /// Creates a new uninitialized state.
     pub fn new() -> Self {
@@ -76,12 +82,22 @@ impl ImportTasksState {
     }
 
     /// Executes a function with access to the repository.
+    ///
+    /// Errors are routed through [`crate::error::AppError`] so the message
+    /// keeps the project's typed-error convention (thiserror-derived
+    /// `Display`) before being collapsed to a string for the existing
+    /// `Result<_, String>` API the Tauri commands rely on.
     fn with_repo<T, F>(&self, operation: F) -> Result<T, String>
     where
         F: FnOnce(&ImportTasksRepository) -> Result<T, crate::error::AppError>,
     {
-        let guard = self.repository.lock().map_err(|_| "Lock error")?;
-        let repo = guard.as_ref().ok_or("Repository not initialized")?;
+        use crate::error::AppError;
+        let guard = self.repository.lock().map_err(|_| {
+            AppError::Internal("Import tasks repository lock poisoned".to_string()).to_string()
+        })?;
+        let repo = guard.as_ref().ok_or_else(|| {
+            AppError::Internal("Import tasks repository not initialized".to_string()).to_string()
+        })?;
         operation(repo).map_err(|e| e.to_string())
     }
 }
@@ -158,6 +174,10 @@ pub async fn update_import_task_status(
 ///
 /// Also moves source archives to trash if the `trash_archives_after_import`
 /// setting is enabled.
+// Tauri command signature — params come from the frontend payload and are
+// fixed by the contract with the Svelte side. Refactoring to a single struct
+// would be a breaking change on the front.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn complete_import_task(
     state: State<'_, ImportTasksState>,

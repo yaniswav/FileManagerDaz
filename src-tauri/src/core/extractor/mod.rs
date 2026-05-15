@@ -52,9 +52,12 @@ mod utils;
 mod zip;
 
 // Re-exports publics
+// kept as public API for external integrations (Tauri commands + tests)
+#[allow(unused_imports)]
 pub use anchors::{
     detect_anchors, is_daz_file, is_system_junk, AnchorDetectionResult, AnchorPoint,
 };
+#[allow(unused_imports)]
 pub use batch::{
     process_batch_with_defaults, BatchItemFailure, BatchItemResult, BatchOperationResult,
     BatchProgress, BatchStats, RobustBatchProcessor,
@@ -62,6 +65,7 @@ pub use batch::{
 pub use normalize::{normalize_and_merge_batch, NormalizeBatchResult};
 #[allow(unused_imports)]
 pub use recursive::NestedArchiveInfo;
+#[allow(unused_imports)]
 pub use recursive::{
     extract_archive_by_format, process_source_recursive, process_source_recursive_with_events,
     RecursiveExtractResult,

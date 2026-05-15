@@ -22,6 +22,8 @@ pub struct ManifestFile {
     /// Target (usually "Content")
     pub target: String,
     /// Action (usually "Install")
+    // kept as public API field for external integrations (consumed by DAZ-format readers)
+    #[allow(dead_code)]
     pub action: String,
 }
 

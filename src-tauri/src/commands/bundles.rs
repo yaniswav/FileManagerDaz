@@ -113,7 +113,7 @@ pub fn list_installed_bundles(
     debug!("Listing installed bundles");
 
     with_db(&db_state, |db| {
-        db.with_connection(|conn| bundles::list_bundles(conn))
+        db.with_connection(bundles::list_bundles)
     })
 }
 

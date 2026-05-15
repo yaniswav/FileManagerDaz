@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Maximum file size (50 MB) for DUF parsing. Larger files are likely
 /// scenes or HD morphs with huge geometry data — not worth parsing for deps.
@@ -122,12 +122,9 @@ fn walk_json(value: &Value, refs: &mut HashSet<String>) {
                 let key_lower = key.to_lowercase();
                 match val {
                     Value::String(s) => {
-                        // For known reference keys, always try to extract
-                        if REF_KEYS.contains(&key_lower.as_str()) {
-                            if let Some(path) = extract_path_from_uri(s) {
-                                refs.insert(path);
-                            }
-                        } else if looks_like_file_path(s) {
+                        // Extract for known reference keys, or for any
+                        // string that *looks* like a relative file path.
+                        if REF_KEYS.contains(&key_lower.as_str()) || looks_like_file_path(s) {
                             if let Some(path) = extract_path_from_uri(s) {
                                 refs.insert(path);
                             }
