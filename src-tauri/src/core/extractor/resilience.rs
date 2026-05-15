@@ -95,7 +95,7 @@ impl RetryStrategy {
                             self.attempt, self.config.max_retries, err
                         );
                         // Add extra delay for file locks (antivirus scan, etc.)
-                        delay = delay + Duration::from_secs(3);
+                        delay += Duration::from_secs(3);
                     } else {
                         warn!(
                             "Operation failed (attempt {}/{}): {}. Retrying in {:?}",
@@ -169,10 +169,16 @@ impl TimeoutGuard {
     }
 
     /// Get elapsed time
+    // kept as public API for external integrations (timing observers)
+    #[allow(dead_code)]
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }
 }
+
+/// (successes, failures) result of running a closure over a batch of items.
+/// Decoupled into a type alias so the public signature stays readable.
+pub type BatchProcessOutcome<T, R> = (Vec<(T, R)>, Vec<(T, AppError)>);
 
 /// Batch processor with error isolation
 pub struct BatchProcessor<T> {
@@ -186,7 +192,7 @@ impl<T> BatchProcessor<T> {
     }
 
     /// Process all items, collecting results and errors separately
-    pub fn process_all<F, R>(self, mut process_fn: F) -> (Vec<(T, R)>, Vec<(T, AppError)>)
+    pub fn process_all<F, R>(self, mut process_fn: F) -> BatchProcessOutcome<T, R>
     where
         F: FnMut(&T) -> AppResult<R>,
     {

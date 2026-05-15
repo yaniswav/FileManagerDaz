@@ -68,10 +68,8 @@ pub fn extract_7z(archive_path: &Path, dest_dir: &Path) -> AppResult<ContentStat
 #[cfg(test)]
 mod tests {
     // 7z tests require a real 7z archive, which is more complex
-    // to generate in tests. We just verify that the function exists.
+    // to generate in tests. The empty test below keeps the module
+    // compiled in test builds without making a no-op assertion.
     #[test]
-    fn test_module_compiles() {
-        // This test simply verifies that the module compiles correctly
-        assert!(true);
-    }
+    fn test_module_compiles() {}
 }

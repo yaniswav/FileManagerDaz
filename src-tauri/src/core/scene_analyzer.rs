@@ -7,7 +7,7 @@ use crate::error::AppResult;
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Decode percent-encoded characters (%20 → space, etc.) in a path string.
 fn percent_decode(s: &str) -> String {

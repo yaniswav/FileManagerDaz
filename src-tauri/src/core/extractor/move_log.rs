@@ -118,8 +118,7 @@ impl MoveLogger {
         entry.ts = Utc::now().to_rfc3339();
         entry.session_id = self.session_id.clone();
 
-        let json = serde_json::to_string(&entry)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
         writeln!(self.writer, "{}", json)?;
         Ok(())
     }

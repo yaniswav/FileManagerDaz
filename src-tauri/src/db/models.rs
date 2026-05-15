@@ -117,6 +117,8 @@ impl NewProduct {
         self
     }
 
+    // kept as public API for external integrations (builder pattern entrypoint)
+    #[allow(dead_code)]
     pub fn with_vendor(mut self, vendor: impl Into<String>) -> Self {
         self.vendor = Some(vendor.into());
         self

@@ -194,7 +194,10 @@ pub fn list_library_products(db_state: State<DbState>) -> ApiResponse<Vec<Produc
 
 /// Searches products indexed from DAZ libraries.
 #[tauri::command]
-pub fn search_library_products(query: String, db_state: State<DbState>) -> ApiResponse<Vec<Product>> {
+pub fn search_library_products(
+    query: String,
+    db_state: State<DbState>,
+) -> ApiResponse<Vec<Product>> {
     info!("search_library_products: {}", query);
     with_db(&db_state, |db| db.search_library_products(&query))
 }
@@ -208,6 +211,9 @@ pub struct PaginatedProducts {
 }
 
 /// Lists library products with server-side pagination and filtering.
+// Tauri command signature — params come from the frontend payload and are
+// fixed by the contract with the Svelte side.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn list_library_products_paginated(
     limit: Option<i64>,
@@ -221,7 +227,7 @@ pub fn list_library_products_paginated(
     collection_id: Option<i64>,
     db_state: State<DbState>,
 ) -> ApiResponse<PaginatedProducts> {
-    let limit = limit.unwrap_or(50).min(200).max(1);
+    let limit = limit.unwrap_or(50).clamp(1, 200);
     let offset = offset.unwrap_or(0).max(0);
 
     with_db(&db_state, |db| {
@@ -274,7 +280,11 @@ pub async fn scan_library_products(
                 Some(path) => vec![PathBuf::from(path)],
                 None => settings.daz_libraries.clone(),
             };
-            (settings.database_path.clone(), settings.thumbnails_dir.clone(), libs)
+            (
+                settings.database_path.clone(),
+                settings.thumbnails_dir.clone(),
+                libs,
+            )
         }
         Err(e) => {
             return Ok(ApiResponse::error(AppError::Config(format!(
@@ -287,13 +297,16 @@ pub async fn scan_library_products(
     let task_id = Uuid::new_v4().to_string();
 
     // Emit task-start
-    let _ = app.emit("app-task-start", TaskPayload {
-        id: task_id.clone(),
-        task_type: "scan".into(),
-        message: "Scanning libraries…".into(),
-        progress: None,
-        status: "running".into(),
-    });
+    let _ = app.emit(
+        "app-task-start",
+        TaskPayload {
+            id: task_id.clone(),
+            task_type: "scan".into(),
+            message: "Scanning libraries…".into(),
+            progress: None,
+            status: "running".into(),
+        },
+    );
 
     // Fire-and-forget: spawn a detached background task so the scan
     // continues even if the user navigates away from the Products tab.
@@ -327,33 +340,42 @@ pub async fn scan_library_products(
         match result {
             Ok(Ok(count)) => {
                 info!("Library scan complete: {} products indexed", count);
-                let _ = app_inner.emit("app-task-end", TaskPayload {
-                    id: task_id_inner,
-                    task_type: "scan".into(),
-                    message: format!("Scan complete — {} products indexed", count),
-                    progress: Some(1.0),
-                    status: "success".into(),
-                });
+                let _ = app_inner.emit(
+                    "app-task-end",
+                    TaskPayload {
+                        id: task_id_inner,
+                        task_type: "scan".into(),
+                        message: format!("Scan complete — {} products indexed", count),
+                        progress: Some(1.0),
+                        status: "success".into(),
+                    },
+                );
             }
             Ok(Err(err)) => {
                 error!("Library scan failed: {}", err);
-                let _ = app_inner.emit("app-task-end", TaskPayload {
-                    id: task_id_inner,
-                    task_type: "scan".into(),
-                    message: format!("Scan failed: {}", err),
-                    progress: None,
-                    status: "error".into(),
-                });
+                let _ = app_inner.emit(
+                    "app-task-end",
+                    TaskPayload {
+                        id: task_id_inner,
+                        task_type: "scan".into(),
+                        message: format!("Scan failed: {}", err),
+                        progress: None,
+                        status: "error".into(),
+                    },
+                );
             }
             Err(join_err) => {
                 error!("Library scan task panicked: {}", join_err);
-                let _ = app_inner.emit("app-task-end", TaskPayload {
-                    id: task_id_inner,
-                    task_type: "scan".into(),
-                    message: format!("Scan crashed: {}", join_err),
-                    progress: None,
-                    status: "error".into(),
-                });
+                let _ = app_inner.emit(
+                    "app-task-end",
+                    TaskPayload {
+                        id: task_id_inner,
+                        task_type: "scan".into(),
+                        message: format!("Scan crashed: {}", join_err),
+                        progress: None,
+                        status: "error".into(),
+                    },
+                );
             }
         }
     });
@@ -401,7 +423,7 @@ impl ResourceProfile {
             .unwrap_or(4);
 
         match self {
-            Self::Low => cpus.min(2).max(1),
+            Self::Low => cpus.clamp(1, 2),
             Self::Normal => {
                 if cpus <= 4 {
                     (cpus.saturating_sub(1)).max(2)
@@ -422,13 +444,16 @@ impl ScanContext {
         let lib_span = 1.0 / self.lib_count as f32;
         let overall = lib_base + lib_span * phase.clamp(0.0, 1.0);
 
-        let _ = self.app.emit("app-task-progress", TaskPayload {
-            id: self.task_id.clone(),
-            task_type: "scan".into(),
-            message: message.to_string(),
-            progress: Some(overall.min(0.99)),
-            status: "running".into(),
-        });
+        let _ = self.app.emit(
+            "app-task-progress",
+            TaskPayload {
+                id: self.task_id.clone(),
+                task_type: "scan".into(),
+                message: message.to_string(),
+                progress: Some(overall.min(0.99)),
+                status: "running".into(),
+            },
+        );
     }
 }
 
@@ -461,11 +486,35 @@ where
     }
 }
 
+/// Like [`with_db`] but the closure returns an [`ApiResponse`] directly,
+/// preserving call-site-specific error codes (e.g. `NOT_FOUND`, `QUERY_ERROR`).
+/// Surfaces `DB_ERROR` when the lock is poisoned or the database is uninitialised.
+pub(crate) fn with_locked_db<T, F>(db_state: &State<DbState>, f: F) -> ApiResponse<T>
+where
+    T: serde::Serialize,
+    F: FnOnce(&Database) -> ApiResponse<T>,
+{
+    let guard = match db_state.0.lock() {
+        Ok(g) => g,
+        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
+    };
+    match guard.as_ref() {
+        Some(db) => f(db),
+        None => ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
+    }
+}
+
 // =============================================================================
 // Library catalog helpers
 // =============================================================================
 
-fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: &ScanContext, lib_idx: usize) -> Result<usize, AppError> {
+fn scan_library(
+    db: &Database,
+    library_path: &Path,
+    thumbnails_dir: &Path,
+    ctx: &ScanContext,
+    lib_idx: usize,
+) -> Result<usize, AppError> {
     if !library_path.exists() {
         return Ok(0);
     }
@@ -486,8 +535,16 @@ fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: 
     for (mi, metadata_path) in metadata_files.iter().enumerate() {
         // Throttle: emit progress every 50 files
         if mi % 50 == 0 {
-            let phase = if meta_total > 0 { mi as f32 / meta_total as f32 * 0.5 } else { 0.0 };
-            ctx.emit_progress(lib_idx, phase, &format!("[{}] Pass 1: {}/{} metadata", lib_name, mi, meta_total));
+            let phase = if meta_total > 0 {
+                mi as f32 / meta_total as f32 * 0.5
+            } else {
+                0.0
+            };
+            ctx.emit_progress(
+                lib_idx,
+                phase,
+                &format!("[{}] Pass 1: {}/{} metadata", lib_name, mi, meta_total),
+            );
         }
 
         let products = match parse_daz_metadata_file(metadata_path) {
@@ -506,7 +563,9 @@ fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: 
         }
 
         // DSX files usually contain a single product; index the first one.
-        let Some(product) = products.first().cloned() else { continue; };
+        let Some(product) = products.first().cloned() else {
+            continue;
+        };
 
         let support_file = metadata_path
             .strip_prefix(library_path)
@@ -526,12 +585,8 @@ fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: 
         let vendor = select_vendor(&product);
 
         let product_path = resolve_product_path(library_path, &product.assets);
-        let thumbnail_path = select_and_cache_thumbnail(
-            library_path,
-            thumbnails_dir,
-            &support_file,
-            &product,
-        )?;
+        let thumbnail_path =
+            select_and_cache_thumbnail(library_path, thumbnails_dir, &support_file, &product)?;
 
         let input = LibraryProductInput {
             name: product.name,
@@ -560,7 +615,11 @@ fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: 
     );
 
     // === Pass 2: Scan for orphan .duf files not tracked by any product ===
-    ctx.emit_progress(lib_idx, 0.5, &format!("[{}] Pass 2: scanning orphans…", lib_name));
+    ctx.emit_progress(
+        lib_idx,
+        0.5,
+        &format!("[{}] Pass 2: scanning orphans…", lib_name),
+    );
     let num_threads = ctx.resource_profile.thread_count();
     let orphan_count = crate::core::orphan_scanner::scan_orphan_dufs(
         db,
@@ -581,7 +640,7 @@ fn scan_library(db: &Database, library_path: &Path, thumbnails_dir: &Path, ctx: 
 
 fn sorted_categories(categories: &std::collections::HashSet<String>) -> Vec<String> {
     let mut list: Vec<String> = categories.iter().cloned().collect();
-    list.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    list.sort_by_key(|a| a.to_lowercase());
     list
 }
 
@@ -625,7 +684,7 @@ fn asset_priority(path: &str) -> u8 {
 }
 
 fn infer_content_type(raw_types: &[String], categories: &[String]) -> Option<String> {
-    let mut inputs: Vec<String> = raw_types.iter().cloned().collect();
+    let mut inputs: Vec<String> = raw_types.to_vec();
     inputs.extend(categories.iter().cloned());
 
     for value in inputs {
@@ -698,10 +757,7 @@ fn select_and_cache_thumbnail(
         None => return Ok(None),
     };
 
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("png");
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("png");
     let key = format!("{}|{}", library_path.display(), support_file);
     let hash = blake3::hash(key.as_bytes()).to_hex().to_string();
     let dest = thumbnails_dir.join(format!("{}.{}", hash, ext));
@@ -774,7 +830,11 @@ fn score_thumbnail_candidate(path: &Path, original: &str) -> i32 {
     if lower.contains("/runtime/textures/") || lower.contains("/data/") {
         score -= 4;
     }
-    if path.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("png")) {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+    {
         score += 1;
     }
 
@@ -795,77 +855,123 @@ pub fn uninstall_product(
 ) -> ApiResponse<UninstallReport> {
     info!("uninstall_product: id={}, dry_run={}", id, dry_run);
 
-    let guard = match db_state.0.lock() {
-        Ok(g) => g,
-        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
+    with_locked_db(&db_state, |db| {
+        // 1. Get product
+        let product = match db.get_product(id) {
+            Ok(Some(p)) => p,
+            Ok(None) => return ApiResponse::error_msg("NOT_FOUND", "Product not found"),
+            Err(e) => return ApiResponse::error(e),
+        };
+
+        // 2. Get tracked file list
+        let tracked_files = match db
+            .with_connection(|conn| crate::db::product_files::get_product_files(conn, id))
+        {
+            Ok(f) => f,
+            Err(e) => return ApiResponse::error(e),
+        };
+
+        // 3. Cleanup files & empty dirs on disk (pure logic — covered by unit tests).
+        let library_path = product.library_path.as_deref().unwrap_or("");
+        let mut stats =
+            perform_file_uninstall(Path::new(library_path), &tracked_files, dry_run);
+
+        // 4. Delete from database (CASCADE handles product_files, collection_items)
+        if !dry_run {
+            if let Err(e) = db.with_connection(|conn| {
+                conn.execute("DELETE FROM products WHERE id = ?1", [id])?;
+                Ok(())
+            }) {
+                stats.errors.push(format!("DB cleanup: {}", e));
+            }
+
+            info!(
+                "Uninstalled product '{}' (id={}): {} files deleted, {} bytes freed, {} errors",
+                product.name,
+                id,
+                stats.files_deleted,
+                stats.bytes_freed,
+                stats.errors.len()
+            );
+        }
+
+        ApiResponse::success(UninstallReport {
+            product_id: id,
+            product_name: product.name,
+            files_found: stats.files_found,
+            files_deleted: stats.files_deleted,
+            files_missing: stats.files_missing,
+            bytes_freed: stats.bytes_freed,
+            errors: stats.errors,
+            dry_run,
+        })
+    })
+}
+
+/// Aggregated counters from a file-uninstall pass.
+struct UninstallFileStats {
+    files_found: usize,
+    files_deleted: usize,
+    files_missing: usize,
+    bytes_freed: u64,
+    errors: Vec<String>,
+}
+
+/// Pure file/directory cleanup for an uninstall: stats every tracked path,
+/// optionally deletes it, then prunes empty parent directories up to (but
+/// not including) `library_path`.
+///
+/// Isolated from the DB / Tauri layer so it can be unit-tested with a
+/// tmpdir. In dry-run mode, the disk is never touched.
+fn perform_file_uninstall(
+    library_path: &Path,
+    tracked_files: &[crate::db::product_files::ProductFile],
+    dry_run: bool,
+) -> UninstallFileStats {
+    let mut stats = UninstallFileStats {
+        files_found: 0,
+        files_deleted: 0,
+        files_missing: 0,
+        bytes_freed: 0,
+        errors: Vec::new(),
     };
-    let db = match guard.as_ref() {
-        Some(db) => db,
-        None => return ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
-    };
+    let mut dirs_to_check: std::collections::BTreeSet<PathBuf> =
+        std::collections::BTreeSet::new();
 
-    // 1. Get product
-    let product = match db.get_product(id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return ApiResponse::error_msg("NOT_FOUND", "Product not found"),
-        Err(e) => return ApiResponse::error(e),
-    };
-
-    // 2. Get tracked file list
-    let tracked_files = match db.with_connection(|conn| {
-        crate::db::product_files::get_product_files(conn, id)
-    }) {
-        Ok(f) => f,
-        Err(e) => return ApiResponse::error(e),
-    };
-
-    // 3. Resolve absolute paths from library_path + relative_path
-    let library_path = product.library_path.as_deref().unwrap_or("");
-
-    let mut files_found = 0usize;
-    let mut files_deleted = 0usize;
-    let mut files_missing = 0usize;
-    let mut bytes_freed = 0u64;
-    let mut errors: Vec<String> = Vec::new();
-    let mut dirs_to_check: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-
-    for pf in &tracked_files {
-        let abs = Path::new(library_path).join(&pf.relative_path);
+    for pf in tracked_files {
+        let abs = library_path.join(&pf.relative_path);
         if abs.exists() {
-            files_found += 1;
+            stats.files_found += 1;
             let size = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
-            bytes_freed += size;
+            stats.bytes_freed += size;
 
             if !dry_run {
                 match std::fs::remove_file(&abs) {
                     Ok(_) => {
-                        files_deleted += 1;
-                        // Track parent dir for empty-dir cleanup
+                        stats.files_deleted += 1;
                         if let Some(parent) = abs.parent() {
                             dirs_to_check.insert(parent.to_path_buf());
                         }
                     }
                     Err(e) => {
-                        errors.push(format!("{}: {}", abs.display(), e));
+                        stats.errors.push(format!("{}: {}", abs.display(), e));
                     }
                 }
             }
         } else {
-            files_missing += 1;
+            stats.files_missing += 1;
         }
     }
 
-    // 4. Clean up empty directories (bottom-up)
+    // Bottom-up: walk from each touched parent up to library_path, removing
+    // empties as we go. Stops at the first non-empty directory.
     if !dry_run {
-        // Sort deepest first
         let mut dirs: Vec<PathBuf> = dirs_to_check.into_iter().collect();
-        dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
 
-        let lib_root = Path::new(library_path);
         for dir in dirs {
-            // Walk upward until library root, removing empty dirs
             let mut current = dir;
-            while current.starts_with(lib_root) && current != lib_root {
+            while current.starts_with(library_path) && current != library_path {
                 if current.is_dir() {
                     match std::fs::read_dir(&current) {
                         Ok(mut entries) => {
@@ -884,89 +990,57 @@ pub fn uninstall_product(
                 }
             }
         }
-
-        // 5. Delete from database (CASCADE handles product_files, collection_items)
-        if let Err(e) = db.with_connection(|conn| {
-            conn.execute("DELETE FROM products WHERE id = ?1", [id])?;
-            Ok(())
-        }) {
-            errors.push(format!("DB cleanup: {}", e));
-        }
-
-        info!(
-            "Uninstalled product '{}' (id={}): {} files deleted, {} bytes freed, {} errors",
-            product.name, id, files_deleted, bytes_freed, errors.len()
-        );
     }
 
-    ApiResponse::success(UninstallReport {
-        product_id: id,
-        product_name: product.name,
-        files_found,
-        files_deleted,
-        files_missing,
-        bytes_freed,
-        errors,
-        dry_run,
-    })
+    stats
 }
 
 /// Checks the integrity of a product's files on disk.
 #[tauri::command]
-pub fn check_product_integrity(
-    id: i64,
-    db_state: State<DbState>,
-) -> ApiResponse<IntegrityReport> {
-    let guard = match db_state.0.lock() {
-        Ok(g) => g,
-        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
-    };
-    let db = match guard.as_ref() {
-        Some(db) => db,
-        None => return ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
-    };
+pub fn check_product_integrity(id: i64, db_state: State<DbState>) -> ApiResponse<IntegrityReport> {
+    with_locked_db(&db_state, |db| {
+        let product = match db.get_product(id) {
+            Ok(Some(p)) => p,
+            Ok(None) => return ApiResponse::error_msg("NOT_FOUND", "Product not found"),
+            Err(e) => return ApiResponse::error(e),
+        };
 
-    let product = match db.get_product(id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return ApiResponse::error_msg("NOT_FOUND", "Product not found"),
-        Err(e) => return ApiResponse::error(e),
-    };
+        let tracked_files = match db
+            .with_connection(|conn| crate::db::product_files::get_product_files(conn, id))
+        {
+            Ok(f) => f,
+            Err(e) => return ApiResponse::error(e),
+        };
 
-    let tracked_files = match db.with_connection(|conn| {
-        crate::db::product_files::get_product_files(conn, id)
-    }) {
-        Ok(f) => f,
-        Err(e) => return ApiResponse::error(e),
-    };
+        let library_path = product.library_path.as_deref().unwrap_or("");
+        let total_files = tracked_files.len();
+        let mut files_present = 0usize;
+        let mut missing_paths: Vec<String> = Vec::new();
 
-    let library_path = product.library_path.as_deref().unwrap_or("");
-    let total_files = tracked_files.len();
-    let mut files_present = 0usize;
-    let mut missing_paths: Vec<String> = Vec::new();
-
-    for pf in &tracked_files {
-        let abs = Path::new(library_path).join(&pf.relative_path);
-        if abs.exists() {
-            files_present += 1;
-        } else {
-            missing_paths.push(pf.relative_path.clone());
+        for pf in &tracked_files {
+            let abs = Path::new(library_path).join(&pf.relative_path);
+            if abs.exists() {
+                files_present += 1;
+            } else {
+                missing_paths.push(pf.relative_path.clone());
+            }
         }
-    }
 
-    let files_missing = total_files - files_present;
-    let integrity_pct = if total_files == 0 {
-        100.0
-    } else {
-        (files_present as f64 / total_files as f64) * 100.0
-    };
+        let files_missing = total_files - files_present;
+        let integrity_pct = if total_files == 0 {
+            100.0
+        } else {
+            (files_present as f64 / total_files as f64) * 100.0
+        };
 
-    ApiResponse::success(IntegrityReport {
-        product_id: id,
-        total_files,
-        files_present,
-        files_missing,
-        integrity_pct,
-        missing_paths,
+        ApiResponse::success(IntegrityReport {
+            product_id: id,
+            total_files,
+            files_present,
+            files_missing,
+            integrity_pct,
+            missing_paths,
+        })
     })
 }
 
@@ -988,29 +1062,24 @@ pub fn analyze_scene(
         return ApiResponse::error_msg("NOT_FOUND", "Scene file not found");
     }
 
-    let guard = match db_state.0.lock() {
-        Ok(g) => g,
-        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
-    };
-    let db = match guard.as_ref() {
-        Some(db) => db,
-        None => return ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
-    };
-
-    // Gather all library paths from settings
+    // Gather all library paths from settings (cheap; done before locking the DB)
     let library_paths: Vec<String> = match settings.read() {
-        Ok(settings) => settings.daz_libraries.iter()
+        Ok(settings) => settings
+            .daz_libraries
+            .iter()
             .filter_map(|p| p.to_str().map(|s| s.to_string()))
             .collect(),
         Err(_) => Vec::new(),
     };
 
-    match db.with_connection(|conn| {
-        crate::core::scene_analyzer::analyze_scene(duf_path, conn, &library_paths)
-    }) {
-        Ok(report) => ApiResponse::success(report),
-        Err(e) => ApiResponse::error(e),
-    }
+    with_locked_db(&db_state, |db| {
+        match db.with_connection(|conn| {
+            crate::core::scene_analyzer::analyze_scene(duf_path, conn, &library_paths)
+        }) {
+            Ok(report) => ApiResponse::success(report),
+            Err(e) => ApiResponse::error(e),
+        }
+    })
 }
 
 // ============================================================================
@@ -1023,19 +1092,12 @@ pub fn get_product_files(
     id: i64,
     db_state: State<DbState>,
 ) -> ApiResponse<Vec<crate::db::product_files::ProductFile>> {
-    let guard = match db_state.0.lock() {
-        Ok(g) => g,
-        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
-    };
-    let db = match guard.as_ref() {
-        Some(db) => db,
-        None => return ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
-    };
-
-    match db.with_connection(|conn| crate::db::product_files::get_product_files(conn, id)) {
-        Ok(files) => ApiResponse::success(files),
-        Err(e) => ApiResponse::error_msg("QUERY_ERROR", &e.to_string()),
-    }
+    with_locked_db(&db_state, |db| {
+        match db.with_connection(|conn| crate::db::product_files::get_product_files(conn, id)) {
+            Ok(files) => ApiResponse::success(files),
+            Err(e) => ApiResponse::error_msg("QUERY_ERROR", &e.to_string()),
+        }
+    })
 }
 
 /// Check if installing files would conflict with existing products.
@@ -1045,19 +1107,137 @@ pub fn check_file_conflicts(
     exclude_product_id: Option<i64>,
     db_state: State<DbState>,
 ) -> ApiResponse<Vec<crate::db::product_files::FileConflict>> {
-    let guard = match db_state.0.lock() {
-        Ok(g) => g,
-        Err(_) => return ApiResponse::error_msg("DB_ERROR", "Database lock poisoned"),
-    };
-    let db = match guard.as_ref() {
-        Some(db) => db,
-        None => return ApiResponse::error_msg("DB_ERROR", "Database not initialized"),
-    };
+    with_locked_db(&db_state, |db| {
+        match db.with_connection(|conn| {
+            crate::db::product_files::check_file_conflicts(conn, &file_paths, exclude_product_id)
+        }) {
+            Ok(conflicts) => ApiResponse::success(conflicts),
+            Err(e) => ApiResponse::error_msg("QUERY_ERROR", &e.to_string()),
+        }
+    })
+}
 
-    match db.with_connection(|conn| {
-        crate::db::product_files::check_file_conflicts(conn, &file_paths, exclude_product_id)
-    }) {
-        Ok(conflicts) => ApiResponse::success(conflicts),
-        Err(e) => ApiResponse::error_msg("QUERY_ERROR", &e.to_string()),
+#[cfg(test)]
+mod tests {
+    //! Tests for the destructive file-uninstall logic.
+    //!
+    //! The Tauri command `uninstall_product` is a thin wrapper around the
+    //! pure [`perform_file_uninstall`] helper — these tests cover the helper
+    //! (filesystem + counters) with `tempfile::TempDir`, which avoids the
+    //! Tauri `State` boilerplate while still exercising every destructive
+    //! code path.
+
+    use super::*;
+    use crate::db::product_files::ProductFile;
+    use tempfile::TempDir;
+
+    fn pf(rel: &str) -> ProductFile {
+        ProductFile {
+            id: 0,
+            product_id: 0,
+            relative_path: rel.to_string(),
+            target: "Content".to_string(),
+        }
+    }
+
+    #[test]
+    fn uninstall_deletes_tracked_files_and_reports_bytes() {
+        let lib = TempDir::new().unwrap();
+        let a = lib.path().join("a.txt");
+        let b = lib.path().join("sub/b.txt");
+        std::fs::create_dir_all(b.parent().unwrap()).unwrap();
+        std::fs::write(&a, b"hello").unwrap();
+        std::fs::write(&b, b"world!").unwrap();
+
+        let files = vec![pf("a.txt"), pf("sub/b.txt")];
+        let stats = perform_file_uninstall(lib.path(), &files, false);
+
+        assert_eq!(stats.files_found, 2);
+        assert_eq!(stats.files_deleted, 2);
+        assert_eq!(stats.files_missing, 0);
+        assert_eq!(stats.bytes_freed, 5 + 6);
+        assert!(stats.errors.is_empty());
+        assert!(!a.exists(), "a.txt must be deleted");
+        assert!(!b.exists(), "sub/b.txt must be deleted");
+    }
+
+    #[test]
+    fn uninstall_dry_run_leaves_disk_untouched() {
+        let lib = TempDir::new().unwrap();
+        let a = lib.path().join("a.txt");
+        std::fs::write(&a, b"hello").unwrap();
+
+        let files = vec![pf("a.txt")];
+        let stats = perform_file_uninstall(lib.path(), &files, true);
+
+        assert_eq!(stats.files_found, 1);
+        assert_eq!(stats.files_deleted, 0, "dry-run must not delete");
+        assert_eq!(stats.files_missing, 0);
+        assert_eq!(stats.bytes_freed, 5);
+        assert!(a.exists(), "dry-run must preserve the file");
+    }
+
+    #[test]
+    fn uninstall_counts_missing_files_without_erroring() {
+        let lib = TempDir::new().unwrap();
+        let a = lib.path().join("a.txt");
+        std::fs::write(&a, b"hi").unwrap();
+        // "b.txt" intentionally not created.
+
+        let files = vec![pf("a.txt"), pf("b.txt")];
+        let stats = perform_file_uninstall(lib.path(), &files, false);
+
+        assert_eq!(stats.files_found, 1);
+        assert_eq!(stats.files_deleted, 1);
+        assert_eq!(stats.files_missing, 1);
+        assert!(
+            stats.errors.is_empty(),
+            "missing files are reported via counters, not errors"
+        );
+    }
+
+    #[test]
+    fn uninstall_prunes_empty_subdirs_up_to_library_root() {
+        let lib = TempDir::new().unwrap();
+        let nested = lib.path().join("sub/deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        let f = nested.join("file.txt");
+        std::fs::write(&f, b"x").unwrap();
+
+        let files = vec![pf("sub/deep/file.txt")];
+        let stats = perform_file_uninstall(lib.path(), &files, false);
+
+        assert_eq!(stats.files_deleted, 1);
+        assert!(!nested.exists(), "empty 'sub/deep' should be removed");
+        assert!(
+            !lib.path().join("sub").exists(),
+            "empty 'sub' should also be cascaded-removed"
+        );
+        assert!(
+            lib.path().exists(),
+            "library root must be preserved as the upper bound"
+        );
+    }
+
+    #[test]
+    fn uninstall_preserves_dirs_with_untracked_siblings() {
+        let lib = TempDir::new().unwrap();
+        let sub = lib.path().join("shared");
+        std::fs::create_dir_all(&sub).unwrap();
+        let tracked = sub.join("tracked.txt");
+        let untracked = sub.join("keep.txt");
+        std::fs::write(&tracked, b"y").unwrap();
+        std::fs::write(&untracked, b"z").unwrap();
+
+        let files = vec![pf("shared/tracked.txt")];
+        let stats = perform_file_uninstall(lib.path(), &files, false);
+
+        assert_eq!(stats.files_deleted, 1);
+        assert!(!tracked.exists(), "tracked file must be deleted");
+        assert!(untracked.exists(), "untracked sibling must remain");
+        assert!(
+            sub.exists(),
+            "directory with a remaining file must not be pruned"
+        );
     }
 }

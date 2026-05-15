@@ -37,7 +37,7 @@ pub struct DestinationAlternative {
 }
 
 /// Rules to determine the destination
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DestinationRule {
     /// Rule name
     pub name: String,
@@ -51,19 +51,6 @@ pub struct DestinationRule {
     pub destination: String,
     /// Priority (higher = priority)
     pub priority: u8,
-}
-
-impl Default for DestinationRule {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            content_type: None,
-            target_figure: None,
-            trigger_tags: Vec::new(),
-            destination: String::new(),
-            priority: 0,
-        }
-    }
 }
 
 /// Default rules for DAZ Studio

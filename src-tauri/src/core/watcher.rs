@@ -40,6 +40,8 @@ pub enum WatchEventType {
     /// New file created
     Created,
     /// File modified (finished writing)
+    // kept as public API variant (emitted by future notify event handlers)
+    #[allow(dead_code)]
     Modified,
     /// File removed
     Removed,
@@ -496,6 +498,12 @@ fn is_archive(path: &Path) -> bool {
 pub struct WatcherState {
     watcher: Mutex<Option<FolderWatcher>>,
     watch_path: Mutex<Option<PathBuf>>,
+}
+
+impl Default for WatcherState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WatcherState {

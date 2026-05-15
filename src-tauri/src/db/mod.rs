@@ -21,5 +21,7 @@ pub mod models;
 pub mod product_files;
 pub mod repository;
 
+// kept as public API for external integrations (TypeCount/VendorCount consumed by Tauri commands and tests)
+#[allow(unused_imports)]
 pub use models::{Collection, DuplicateGroup, InstalledAsset, IntegrityReport, LibraryProductInput, LibraryStats, NewProduct, Product, RequiredProduct, SceneAnalysisReport, TypeCount, UninstallReport, UpdateProduct, VendorCount};
 pub use repository::Database;

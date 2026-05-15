@@ -1342,9 +1342,10 @@ mod tests {
     }
 
     fn test_settings_with_library(lib_path: &Path) -> AppSettings {
-        let mut settings = AppSettings::default();
-        settings.default_destination = Some(lib_path.to_path_buf());
-        settings
+        AppSettings {
+            default_destination: Some(lib_path.to_path_buf()),
+            ..AppSettings::default()
+        }
     }
 
     #[test]
@@ -1411,5 +1412,72 @@ mod tests {
 
         let _ = fs::remove_dir_all(base);
         Ok(())
+    }
+
+    /// Recursion guard: when current_depth has already exceeded the budget,
+    /// `extract_nested_archives` must short-circuit without touching disk,
+    /// without queueing anything, and without updating max_depth_reached.
+    /// This is the contract that bounds nested-archive blow-ups.
+    #[test]
+    fn extract_nested_archives_short_circuits_past_max_depth() {
+        let base = unique_path("max_depth_guard");
+        fs::create_dir_all(&base).unwrap();
+
+        let mut nested_archives: Vec<NestedArchiveInfo> = Vec::new();
+        let mut max_depth_reached: usize = 0;
+        let settings = AppSettings::default();
+
+        let result = extract_nested_archives(
+            &base,
+            10, // current_depth — well beyond the cap
+            5,  // max_depth
+            &mut nested_archives,
+            &mut max_depth_reached,
+            &settings,
+        );
+
+        assert!(
+            result.is_ok(),
+            "depth-exceeded path must return Ok, not error"
+        );
+        assert_eq!(result.unwrap(), base, "the original dir is returned unchanged");
+        assert!(
+            nested_archives.is_empty(),
+            "no nested archives may be queued past the cap"
+        );
+        assert_eq!(
+            max_depth_reached, 0,
+            "max_depth_reached must not advance once the cap is breached"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Hard error path: a file with a `.zip` extension but invalid content
+    /// must surface as `Err` from `process_source_recursive`. Silent success
+    /// here is the failure mode flagged by the audit — a corrupt archive
+    /// must NOT slip through as an empty/partial result.
+    #[test]
+    fn process_source_recursive_surfaces_error_on_corrupt_zip() {
+        let base = unique_path("corrupt_zip");
+        fs::create_dir_all(&base).unwrap();
+        let bad_zip = base.join("bad.zip");
+        fs::write(&bad_zip, b"this is not a zip").unwrap();
+
+        let settings = AppSettings::default();
+        let result = process_source_recursive(&bad_zip, 5, &settings);
+
+        // Must be Err, and specifically a ZipError — anything else would mean
+        // the corrupt-archive path got mis-routed through Io/Internal.
+        match result {
+            Err(AppError::ZipError(_)) => {}
+            Err(other) => panic!(
+                "expected AppError::ZipError on a corrupt zip, got: {:?}",
+                other
+            ),
+            Ok(_) => panic!("expected an error on a corrupt zip, got Ok"),
+        }
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

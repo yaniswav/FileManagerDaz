@@ -73,11 +73,15 @@ pub struct BatchStats {
     pub duration_seconds: u64,
 }
 
+/// Progress callback shared between the batch processor and any caller-side
+/// observer; held in an Arc<Mutex<...>> so it can be cloned into Rayon tasks.
+type ProgressCallback = Arc<Mutex<dyn FnMut(BatchProgress) + Send>>;
+
 /// Batch processor with progress callback
 pub struct RobustBatchProcessor {
     config: ResilienceConfig,
     settings: AppSettings,
-    progress_callback: Option<Arc<Mutex<dyn FnMut(BatchProgress) + Send>>>,
+    progress_callback: Option<ProgressCallback>,
     checkpoint_dir: Option<PathBuf>,
     session_id: Option<String>,
     enable_cleanup: bool,
@@ -213,6 +217,25 @@ impl RobustBatchProcessor {
         let (successes, failures) = processor.process_all(|path| {
             // Update progress
             completed += 1;
+
+            // ETA based on items that have actually finished so far. At callback
+            // time `completed` was just bumped for the *current* item (which is
+            // about to start), so `completed - 1` items have finished and the
+            // elapsed time reflects their processing.
+            let eta_seconds = {
+                let finished = completed.saturating_sub(1);
+                if finished > 0 && total > finished {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    let avg_per_item = elapsed / finished as f64;
+                    let remaining = (total - finished) as f64;
+                    // Floor at 1s while work remains, otherwise the UI flips
+                    // to "0s" on very fast items even though more are queued.
+                    Some(((avg_per_item * remaining).round() as u64).max(1))
+                } else {
+                    None
+                }
+            };
+
             if let Some(ref callback) = self.progress_callback {
                 if let Ok(mut cb) = callback.lock() {
                     cb(BatchProgress {
@@ -221,7 +244,7 @@ impl RobustBatchProcessor {
                         succeeded,
                         failed,
                         current_item: Some(path.to_string_lossy().to_string()),
-                        eta_seconds: None, // TODO: calculate based on average time
+                        eta_seconds,
                     });
                 }
             }
@@ -347,6 +370,8 @@ impl RobustBatchProcessor {
 }
 
 /// Convenience function for batch processing with default settings
+// kept as public API for external integrations (Tauri commands + tests)
+#[allow(dead_code)]
 pub fn process_batch_with_defaults(paths: Vec<PathBuf>, settings: &AppSettings) -> AppResult<BatchOperationResult> {
     let config = settings.to_resilience_config();
 
@@ -365,7 +390,10 @@ mod tests {
         let config = ResilienceConfig::default();
         let settings = AppSettings::default();
         let _processor = RobustBatchProcessor::new(config, settings).with_progress(move |p| {
-            progress_clone.lock().unwrap().push(p);
+            progress_clone
+                .lock()
+                .expect("progress mutex poisoned in test")
+                .push(p);
         });
 
         // Progress callback is set

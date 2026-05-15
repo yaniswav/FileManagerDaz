@@ -70,10 +70,7 @@ pub fn is_secondary_part(path: &Path) -> bool {
 ///
 /// Returns `None` if the file is a regular (non-split) archive.
 pub fn detect_multipart(path: &Path) -> Option<MultiPartInfo> {
-    let name = match path.file_name().and_then(|n| n.to_str()) {
-        Some(n) => n,
-        None => return None,
-    };
+    let name = path.file_name().and_then(|n| n.to_str())?;
     let name_lower = name.to_lowercase();
     let parent = path.parent()?;
 

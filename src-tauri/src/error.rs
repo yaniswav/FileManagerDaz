@@ -49,6 +49,8 @@ pub enum AppError {
     UnsupportedFormat(String),
 
     /// Archive file is corrupted or malformed
+    // kept as part of the public error surface (consumed by frontend via ApiError mapping)
+    #[allow(dead_code)]
     #[error("Corrupted or invalid archive: {0}")]
     InvalidArchive(String),
 

@@ -88,10 +88,10 @@ pub fn move_to_trash(path: &Path) -> AppResult<bool> {
         "Failed to move to trash after {} attempts: {}",
         max_retries, err_msg
     );
-    Err(AppError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("Failed to move to trash: {}", err_msg),
-    )))
+    Err(AppError::Io(std::io::Error::other(format!(
+        "Failed to move to trash: {}",
+        err_msg
+    ))))
 }
 
 /// Checks if a path is a supported archive

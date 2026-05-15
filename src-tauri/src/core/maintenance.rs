@@ -201,27 +201,27 @@ pub fn scan_library(library_path: &Path, options: &ScanOptions) -> AppResult<Mai
         total_size += size;
 
         // Temporary file detection
-        if options.detect_temp_files {
-            if is_temp_file(&file_name) {
-                issues.push(MaintenanceIssue::TempFile {
-                    path: path.to_string_lossy().to_string(),
-                    size,
-                });
-                recoverable += size;
-                continue; // No need for other checks
-            }
+        if options.detect_temp_files && is_temp_file(&file_name) {
+            issues.push(MaintenanceIssue::TempFile {
+                path: path.to_string_lossy().into_owned(),
+                size,
+            });
+            recoverable += size;
+            continue; // No need for other checks
         }
 
         // Duplicate detection by hash
         if options.detect_duplicates && size >= options.min_size_for_hash {
             if let Ok(hash) = compute_fast_hash(path) {
-                let path_str = path.to_string_lossy().to_string();
-                if let Some((original_path, _original_size)) = hash_map.get(&hash) {
+                let path_str = path.to_string_lossy().into_owned();
+                // Snapshot the lookup so the map borrow ends before we move `hash` below.
+                let duplicate_of = hash_map.get(&hash).map(|(p, _)| p.clone());
+                if let Some(original_path) = duplicate_of {
                     issues.push(MaintenanceIssue::Duplicate {
                         path: path_str,
-                        duplicate_of: original_path.clone(),
+                        duplicate_of: original_path,
                         size,
-                        hash: hash.clone(),
+                        hash,
                     });
                     recoverable += size;
                 } else {
@@ -233,16 +233,20 @@ pub fn scan_library(library_path: &Path, options: &ScanOptions) -> AppResult<Mai
         // Similar name detection
         if options.detect_similar_names {
             let normalized = normalize_filename(&file_name);
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.to_string_lossy().into_owned();
 
-            if let Some(similar_path) = name_map.get(&normalized) {
-                if similar_path != &path_str {
+            // Snapshot the existing entry so the map borrow ends before we
+            // need to move `path_str` (either into the issue or into the map).
+            let existing = name_map.get(&normalized).cloned();
+            if let Some(similar_path) = existing {
+                if similar_path != path_str {
                     issues.push(MaintenanceIssue::SimilarName {
-                        path: path_str.clone(),
-                        similar_to: similar_path.clone(),
+                        path: path_str,
+                        similar_to: similar_path,
                         similarity: 0.9, // Simplification
                     });
                 }
+                // Same path already mapped to this normalized name — no-op.
             } else {
                 name_map.insert(normalized, path_str);
             }
@@ -264,7 +268,7 @@ pub fn scan_library(library_path: &Path, options: &ScanOptions) -> AppResult<Mai
                     .unwrap_or(false)
                 {
                     issues.push(MaintenanceIssue::EmptyFolder {
-                        path: path.to_string_lossy().to_string(),
+                        path: path.to_string_lossy().into_owned(),
                     });
                 }
             }
@@ -291,8 +295,6 @@ pub fn scan_library(library_path: &Path, options: &ScanOptions) -> AppResult<Mai
 
 /// Quick scan of all libraries
 pub fn scan_all_libraries(options: &ScanOptions, settings: &AppSettings) -> AppResult<MaintenanceSummary> {
-    let libraries = settings.daz_libraries.clone();
-
     let mut combined = MaintenanceSummary {
         total_files_scanned: 0,
         total_size_scanned: 0,
@@ -301,7 +303,7 @@ pub fn scan_all_libraries(options: &ScanOptions, settings: &AppSettings) -> AppR
         scan_duration_ms: 0,
     };
 
-    for lib in &libraries {
+    for lib in &settings.daz_libraries {
         if let Ok(summary) = scan_library(Path::new(lib), options) {
             combined.total_files_scanned += summary.total_files_scanned;
             combined.total_size_scanned += summary.total_size_scanned;
@@ -486,7 +488,7 @@ pub fn cleanup_empty_folders(library_path: &Path) -> AppResult<CleanupResult> {
         .collect();
 
     // Sort by decreasing depth
-    folders.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+    folders.sort_by_key(|f| std::cmp::Reverse(f.components().count()));
 
     for folder in folders {
         // Check if the folder is empty
@@ -641,7 +643,7 @@ pub fn cleanup_library_complete(library_path: &Path) -> AppResult<CleanupResult>
             .collect();
 
         // Sort by decreasing depth (delete children before parents)
-        folders.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        folders.sort_by_key(|f| std::cmp::Reverse(f.components().count()));
 
         let mut deleted_this_pass = 0;
 

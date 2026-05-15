@@ -198,7 +198,7 @@ pub fn is_daz_file(path: &Path) -> bool {
 /// Recursive scanner for anchor points
 fn scan_for_anchors_recursive(
     current: &Path,
-    root: &Path,
+    _root: &Path,
     depth: usize,
     result: &mut AnchorDetectionResult,
 ) -> AppResult<()> {
@@ -274,7 +274,7 @@ fn scan_for_anchors_recursive(
 
     // Recursively scan all subdirectories
     for (subdir_path, _) in subdirs {
-        scan_for_anchors_recursive(&subdir_path, root, depth + 1, result)?;
+        scan_for_anchors_recursive(&subdir_path, _root, depth + 1, result)?;
     }
 
     Ok(())

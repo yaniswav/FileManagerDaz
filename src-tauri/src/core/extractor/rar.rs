@@ -73,9 +73,10 @@ pub fn extract_rar(archive_path: &Path, dest_dir: &Path, settings: &AppSettings)
 
 #[cfg(test)]
 mod tests {
-    // RAR tests require unrar.exe and a real RAR archive
+    // RAR tests require unrar.exe and a real RAR archive.
+    // This empty test exists purely to make sure the module is still
+    // compiled in test builds (catches use-after-rename in the rest of
+    // the crate even when we cannot exercise unrar in CI).
     #[test]
-    fn test_module_compiles() {
-        assert!(true);
-    }
+    fn test_module_compiles() {}
 }

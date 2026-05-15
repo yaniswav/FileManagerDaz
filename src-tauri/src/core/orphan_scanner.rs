@@ -195,7 +195,7 @@ pub fn scan_orphan_dufs(
 
                     // Track progress
                     let done = parsed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if done % 20 == 0 || done == group_total {
+                    if done.is_multiple_of(20) || done == group_total {
                         let phase = 0.55 + (done as f32 / group_total as f32) * 0.35;
                         emit_progress(
                             phase,
@@ -223,7 +223,7 @@ pub fn scan_orphan_dufs(
             }
 
             // Emit DB-write progress every 50 products
-            if batch_count % 50 == 0 {
+            if batch_count.is_multiple_of(50) {
                 let phase = 0.90 + (batch_count as f32 / group_total as f32) * 0.10;
                 emit_progress(phase, &format!("[{}] Writing: {}/{}", lib_name, batch_count, group_total));
             }
@@ -500,4 +500,131 @@ fn write_orphan_product(
         tx.commit()?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the orphan-product heuristic.
+    //!
+    //! The destructive part of [`scan_orphan_dufs`] is the identity
+    //! resolution: every group keyed by [`ResolvedProduct`] becomes a row
+    //! in `products` (with `origin = 'library'`) plus its `product_files`.
+    //! A bad heuristic would silently create wrong/dupes — these tests
+    //! pin the resolution behaviour against the real `TECHNICAL_DIRS` /
+    //! `ORPHAN_SCAN_DIRS` lists.
+    //!
+    //! Pure unit tests — no filesystem and no DB. Full end-to-end coverage
+    //! of [`scan_orphan_dufs`] would require fixture libraries and a real
+    //! DB, which is intentionally out of scope here.
+
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Product directly under a scan_root: name is the product folder,
+    /// vendor is the immediate parent (here `Genesis 9`, which is in
+    /// TECHNICAL_DIRS, so it must be filtered out → vendor = None).
+    #[test]
+    fn resolve_filters_technical_vendor() {
+        let lib = Path::new("/lib");
+        let start = Path::new("/lib/People/Genesis 9/Amala G9");
+        let id = resolve_product_identity(start, lib);
+        assert_eq!(id.name, "Amala G9");
+        assert_eq!(
+            id.vendor, None,
+            "'Genesis 9' is in TECHNICAL_DIRS and must be filtered as vendor"
+        );
+        assert_eq!(id.root_path, start);
+    }
+
+    /// Real vendor folder: a non-technical, non-scan_root parent is kept
+    /// as vendor.
+    #[test]
+    fn resolve_keeps_real_vendor() {
+        let lib = Path::new("/lib");
+        let start = Path::new("/lib/People/Genesis 9/VendorX/Amala G9");
+        let id = resolve_product_identity(start, lib);
+        assert_eq!(id.name, "Amala G9");
+        assert_eq!(id.vendor.as_deref(), Some("VendorX"));
+        assert_eq!(id.root_path, start);
+    }
+
+    /// Two products under the same vendor must both resolve to vendor =
+    /// `Some("VendorX")` and stay grouped by their own product name.
+    #[test]
+    fn resolve_keeps_vendor_consistent_across_sibling_products() {
+        let lib = Path::new("/lib");
+        let id1 = resolve_product_identity(Path::new("/lib/People/VendorX/Char1"), lib);
+        let id2 = resolve_product_identity(Path::new("/lib/People/VendorX/Char2"), lib);
+        assert_eq!(id1.vendor.as_deref(), Some("VendorX"));
+        assert_eq!(id2.vendor.as_deref(), Some("VendorX"));
+        assert_eq!(id1.name, "Char1");
+        assert_eq!(id2.name, "Char2");
+        assert_ne!(id1, id2, "siblings must be distinct identities");
+    }
+
+    /// Walking up should skip technical folders. A .duf nested deep
+    /// under `Materials/Iray/...` must still resolve to the product
+    /// root.
+    #[test]
+    fn resolve_walks_past_technical_dirs() {
+        let lib = Path::new("/lib");
+        let start = Path::new("/lib/People/Genesis 9/Amala G9/Materials/Iray");
+        let id = resolve_product_identity(start, lib);
+        assert_eq!(id.name, "Amala G9");
+        assert_eq!(
+            id.root_path,
+            Path::new("/lib/People/Genesis 9/Amala G9"),
+            "root_path must point to the resolved product folder, not the technical leaf"
+        );
+    }
+
+    /// Reaching a scan_root without crossing a real product → walk-down
+    /// fallback kicks in and returns the first non-technical component.
+    #[test]
+    fn resolve_falls_back_when_only_scan_root_seen() {
+        let lib = Path::new("/lib");
+        // start at the scan_root itself (no children) — walk-up breaks
+        // immediately on "People" (scan_root); walk-down has nothing
+        // useful left and the ultimate fallback names it "People".
+        let start = Path::new("/lib/People");
+        let id = resolve_product_identity(start, lib);
+        assert_eq!(id.name, "People");
+        assert_eq!(id.vendor, None);
+        assert_eq!(id.root_path, start);
+    }
+
+    /// `start_dir` outside the library tree: walk-up exits on the
+    /// `starts_with` guard, walk-down strip_prefix fails, ultimate
+    /// fallback uses the basename.
+    #[test]
+    fn resolve_handles_path_outside_library() {
+        let lib = Path::new("/lib");
+        let start = Path::new("/elsewhere/StuffFolder");
+        let id = resolve_product_identity(start, lib);
+        assert_eq!(id.name, "StuffFolder");
+        assert_eq!(id.vendor, None);
+        assert_eq!(id.root_path, start);
+    }
+
+    /// `ResolvedProduct` is the HashMap key that groups .duf files into a
+    /// product — two .duf files that resolve to the same identity must
+    /// hash and compare equal so the grouping in [`scan_orphan_dufs`]
+    /// merges them into a single product.
+    #[test]
+    fn resolved_product_groups_duf_files_with_same_identity() {
+        let lib = Path::new("/lib");
+        let duf_a_parent = Path::new("/lib/People/Genesis 9/VendorX/MyChar");
+        let duf_b_parent = Path::new("/lib/People/Genesis 9/VendorX/MyChar/Materials");
+
+        let id_a = resolve_product_identity(duf_a_parent, lib);
+        let id_b = resolve_product_identity(duf_b_parent, lib);
+
+        assert_eq!(id_a, id_b, "both DUFs must resolve to the same product");
+
+        let mut map: HashMap<ResolvedProduct, Vec<PathBuf>> = HashMap::new();
+        map.entry(id_a).or_default().push(PathBuf::from("a.duf"));
+        map.entry(id_b).or_default().push(PathBuf::from("b.duf"));
+        assert_eq!(map.len(), 1, "grouping must produce a single bucket");
+        assert_eq!(map.values().next().unwrap().len(), 2);
+    }
 }

@@ -57,6 +57,8 @@ pub fn init_product_files_table(conn: &Connection) -> AppResult<()> {
 
 /// Insert file entries for a product (from parsed Manifest.dsx).
 /// Skips duplicates silently (INSERT OR IGNORE).
+// kept as public API for external integrations (manifest-driven indexers)
+#[allow(dead_code)]
 pub fn insert_product_files(
     conn: &Connection,
     product_id: i64,
@@ -173,6 +175,9 @@ pub fn insert_product_files_batch(
 }
 
 /// Delete all file records for a product (used when uninstalling).
+// kept as public API for external integrations (manual cleanup paths;
+// the standard uninstall path goes through CASCADE on products DELETE).
+#[allow(dead_code)]
 pub fn delete_product_files(conn: &Connection, product_id: i64) -> AppResult<usize> {
     let count = conn.execute(
         "DELETE FROM product_files WHERE product_id = ?1",

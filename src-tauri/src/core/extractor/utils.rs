@@ -173,14 +173,14 @@ pub fn find_archives_in_dir(dir: &Path) -> AppResult<Vec<PathBuf>> {
 
     for entry in WalkDir::new(dir).min_depth(1).max_depth(10) {
         let entry = entry?;
-        if entry.file_type().is_file() {
-            if ArchiveFormat::from_extension(entry.path()).is_some() {
-                // Skip secondary parts of multi-part archives
-                if multipart::is_secondary_part(entry.path()) {
-                    continue;
-                }
-                archives.push(entry.path().to_path_buf());
+        if entry.file_type().is_file()
+            && ArchiveFormat::from_extension(entry.path()).is_some()
+        {
+            // Skip secondary parts of multi-part archives
+            if multipart::is_secondary_part(entry.path()) {
+                continue;
             }
+            archives.push(entry.path().to_path_buf());
         }
     }
 

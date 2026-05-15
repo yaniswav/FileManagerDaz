@@ -48,6 +48,12 @@ pub struct WatcherInfo {
 /// Tauri state for watcher (reuses State pattern)
 pub struct TauriWatcherState(pub Mutex<WatcherState>);
 
+impl Default for TauriWatcherState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TauriWatcherState {
     pub fn new() -> Self {
         Self(Mutex::new(WatcherState::new()))
