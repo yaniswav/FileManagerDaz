@@ -179,6 +179,7 @@ $RECYCLE.BIN/
 # AI / Copilot / Session Files
 # ─────────────────────────────────────────────────────────────────────────────
 .claude/
+CLAUDE.md
 .copilot/
 .cursor/
 resume-session.txt

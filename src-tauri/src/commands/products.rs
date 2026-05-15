@@ -2,20 +2,23 @@
 
 use crate::commands::TaskPayload;
 use crate::config::SettingsState;
-use blake3;
-use crate::core::catalog::{list_support_metadata_files, normalize_rel_path, parse_daz_metadata_file, CatalogProduct};
-use crate::db::{Database, DuplicateGroup, IntegrityReport, LibraryProductInput, LibraryStats, NewProduct, Product, SceneAnalysisReport, UninstallReport, UpdateProduct};
+use crate::core::catalog::{
+    list_support_metadata_files, normalize_rel_path, parse_daz_metadata_file, CatalogProduct,
+};
+use crate::db::{
+    Database, DuplicateGroup, IntegrityReport, LibraryProductInput, LibraryStats, NewProduct,
+    Product, SceneAnalysisReport, UninstallReport, UpdateProduct,
+};
 use crate::error::{ApiResponse, AppError};
+use blake3;
 use chrono::{DateTime, Utc};
-use rusqlite::params;
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 use tokio::task::spawn_blocking;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 // ============================================================================
@@ -167,7 +170,12 @@ pub fn batch_update_tags(
     db_state: State<DbState>,
 ) -> ApiResponse<usize> {
     let m = mode.as_deref().unwrap_or("add");
-    info!("batch_update_tags: {} products, mode={}, {} tags", ids.len(), m, tags.len());
+    info!(
+        "batch_update_tags: {} products, mode={}, {} tags",
+        ids.len(),
+        m,
+        tags.len()
+    );
     with_db(&db_state, |db| db.batch_update_tags(&ids, &tags, m))
 }
 
