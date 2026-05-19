@@ -148,11 +148,9 @@ pub fn parse_daz_metadata_file(path: &Path) -> AppResult<Vec<CatalogProduct>> {
                     _ => {}
                 }
             }
-            Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"Product" {
-                    if let Some(product) = current.take() {
-                        products.push(product);
-                    }
+            Ok(Event::End(e)) if e.name().as_ref() == b"Product" => {
+                if let Some(product) = current.take() {
+                    products.push(product);
                 }
             }
             Ok(Event::Eof) => break,

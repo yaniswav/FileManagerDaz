@@ -502,7 +502,9 @@ fn move_to_default_library(temp_dir: &Path, source_path: &Path, settings: &AppSe
             if entry_path.is_dir() {
                 info!("Merging anchor folder: {:?} -> library", entry_name);
                 if let Err(e) = merge_directories(&entry_path, &dest_path) {
-                    move_counts.errors += 1;
+                    // Error is captured in the move log just below; the
+                    // counter would never be observed because we return
+                    // immediately, so no bump here.
                     log_move_entry(
                         &mut move_logger,
                         {
@@ -543,7 +545,7 @@ fn move_to_default_library(temp_dir: &Path, source_path: &Path, settings: &AppSe
                 info!("Copying DAZ file: {:?} -> library", entry_name);
                 if let Some(parent) = dest_path.parent() {
                     if let Err(e) = fs::create_dir_all(parent) {
-                        move_counts.errors += 1;
+                        // See note above: counter bump dead-on-return.
                         log_move_entry(
                             &mut move_logger,
                             {
@@ -559,7 +561,6 @@ fn move_to_default_library(temp_dir: &Path, source_path: &Path, settings: &AppSe
                     }
                 }
                 if let Err(e) = fs::copy(&entry_path, &dest_path) {
-                    move_counts.errors += 1;
                     log_move_entry(
                         &mut move_logger,
                         {
@@ -653,7 +654,6 @@ fn move_to_default_library(temp_dir: &Path, source_path: &Path, settings: &AppSe
 
                 info!("Copying loose file: {:?}", file_name);
                 if let Err(e) = fs::copy(&entry_path, &dest_file) {
-                    move_counts.errors += 1;
                     log_move_entry(
                         &mut move_logger,
                         {

@@ -283,7 +283,7 @@ pub fn propose_destination(
     }
 
     // Sort by descending score
-    matched_rules.sort_by(|a, b| b.0.cmp(&a.0));
+    matched_rules.sort_by_key(|r| std::cmp::Reverse(r.0));
 
     // Build proposal
     let (relative_path, reason, confidence) =
