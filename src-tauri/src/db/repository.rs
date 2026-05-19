@@ -218,8 +218,8 @@ impl Database {
 
             conn.execute(
                 r#"
-                INSERT INTO products (name, path, import_task_id, source_archive, content_type, global_id, vendor, installed_at, tags, files_count, total_size)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                INSERT INTO products (name, path, import_task_id, source_archive, content_type, global_id, vendor, thumbnail_path, installed_at, tags, files_count, total_size)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
                 params![
                     product.name,
@@ -229,6 +229,7 @@ impl Database {
                     product.content_type,
                     product.global_id,
                     product.vendor,
+                    product.thumbnail_path,
                     installed_at,
                     product.tags,
                     product.files_count,

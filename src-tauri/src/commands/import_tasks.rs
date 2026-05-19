@@ -292,6 +292,43 @@ fn upsert_product_from_task(
         }
     }
 
+    // Re-runs analyzer on destination: suggested_tags are not propagated through
+    // the ImportTask row, so we rebuild them here for persistence.
+    match crate::core::analyzer::analyze_content(Path::new(destination)) {
+        Ok(analysis) if !analysis.suggested_tags.is_empty() => {
+            new_product = new_product.with_tags(analysis.suggested_tags.join(","));
+        }
+        Ok(_) => {}
+        Err(e) => warn!("Auto-tag analysis failed for {}: {}", destination, e),
+    }
+
+    // Discover the promo image next to the .duf files; stored as a relative path
+    // with forward slashes so the frontend can resolve it under any library root.
+    let duf_files: Vec<PathBuf> = walkdir::WalkDir::new(destination)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("duf"))
+        })
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    if let Some(thumb_abs) = crate::core::thumbnails::find_best_thumbnail(
+        Path::new(destination),
+        &task.name,
+        &duf_files,
+    ) {
+        if let Ok(rel) = thumb_abs.strip_prefix(destination) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            new_product = new_product.with_thumbnail(rel_str);
+        }
+    }
+
     let guard = products_db_state
         .0
         .lock()
