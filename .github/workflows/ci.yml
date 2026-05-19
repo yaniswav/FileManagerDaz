@@ -82,7 +82,6 @@ jobs:
       - name: Cargo Clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: true  # Clippy warnings don't fail the build
 
       - name: Cargo Test
         working-directory: src-tauri
