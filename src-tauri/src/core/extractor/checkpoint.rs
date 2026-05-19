@@ -155,45 +155,6 @@ impl Checkpoint {
         Ok(checkpoint)
     }
 
-    /// Find latest checkpoint in directory
-    // kept as public API for external integrations (recovery flows)
-    #[allow(dead_code)]
-    pub fn find_latest(checkpoint_dir: &Path) -> AppResult<Option<Self>> {
-        if !checkpoint_dir.exists() {
-            return Ok(None);
-        }
-
-        let entries = fs::read_dir(checkpoint_dir).map_err(|e| {
-            AppError::Io(std::io::Error::other(format!(
-                "Failed to read checkpoint dir: {}",
-                e
-            )))
-        })?;
-
-        let mut checkpoints = Vec::new();
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                match fs::read_to_string(&path) {
-                    Ok(json) => match serde_json::from_str::<Checkpoint>(&json) {
-                        Ok(checkpoint) => checkpoints.push(checkpoint),
-                        Err(e) => warn!("Failed to parse checkpoint {:?}: {}", path, e),
-                    },
-                    Err(e) => warn!("Failed to read checkpoint {:?}: {}", path, e),
-                }
-            }
-        }
-
-        if checkpoints.is_empty() {
-            return Ok(None);
-        }
-
-        // Return checkpoint with most recent update
-        checkpoints.sort_by_key(|c| c.last_update);
-        Ok(Some(checkpoints.pop().unwrap()))
-    }
-
     /// Delete checkpoint file
     pub fn delete(&self, checkpoint_dir: &Path) -> AppResult<()> {
         let checkpoint_file = checkpoint_dir.join(format!("{}.json", self.session_id));

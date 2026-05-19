@@ -117,7 +117,8 @@ impl NewProduct {
         self
     }
 
-    // kept as public API for external integrations (builder pattern entrypoint)
+    // Builder-style setter; kept for API ergonomy alongside `with_source`,
+    // `with_tags`, etc. — symmetry of the NewProduct builder.
     #[allow(dead_code)]
     pub fn with_vendor(mut self, vendor: impl Into<String>) -> Self {
         self.vendor = Some(vendor.into());

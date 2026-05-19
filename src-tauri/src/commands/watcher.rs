@@ -30,7 +30,6 @@ impl From<WatchEvent> for WatchEventDto {
             path: event.path.to_string_lossy().to_string(),
             event_type: match event.event_type {
                 WatchEventType::Created => "created".to_string(),
-                WatchEventType::Modified => "modified".to_string(),
                 WatchEventType::Removed => "removed".to_string(),
             },
         }

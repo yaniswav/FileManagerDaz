@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::{info, warn};
 
 // ============================================================================
@@ -125,19 +125,6 @@ impl ExtractionTimingSession {
         }
     }
 
-    /// Records a step with its duration directly (for functions that measure themselves)
-    // kept as public API for external integrations (timing instrumentation hooks)
-    #[allow(dead_code)]
-    pub fn record_step(&mut self, name: &str, duration: Duration) {
-        let duration_ms = duration.as_millis() as u64;
-        info!("[TIMING] Step '{}' recorded: {} ms", name, duration_ms);
-
-        self.steps.push(TimingStep {
-            name: name.to_string(),
-            duration_ms,
-        });
-    }
-
     /// Sets the final extraction statistics
     pub fn set_stats(&mut self, files: usize, dirs: usize, size_bytes: u64) {
         self.stats = Some(ExtractionStats {
@@ -226,31 +213,6 @@ fn write_report_to_file(report: &TimingReport, log_path: &std::path::Path) -> st
     Ok(())
 }
 
-/// Helper to measure the time of a closure and return the duration
-// kept as public API for external integrations (dev-mode timing helpers)
-#[allow(dead_code)]
-pub fn measure<T, F: FnOnce() -> T>(f: F) -> (T, Duration) {
-    let start = Instant::now();
-    let result = f();
-    let duration = start.elapsed();
-    (result, duration)
-}
-
-/// Helper to measure and log the time of an operation
-// kept as public API for external integrations (dev-mode timing helpers)
-#[allow(dead_code)]
-pub fn timed<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
-    let start = Instant::now();
-    let result = f();
-    let duration = start.elapsed();
-    info!(
-        "[TIMING] {} completed in {:?} ({} ms)",
-        name,
-        duration,
-        duration.as_millis()
-    );
-    result
-}
 
 #[cfg(test)]
 mod tests {

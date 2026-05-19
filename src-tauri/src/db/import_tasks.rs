@@ -334,29 +334,6 @@ impl ImportTasksRepository {
         })
     }
 
-    /// Lists recent tasks (with limit)
-    // kept as public API for external integrations (admin/diagnostic queries)
-    #[allow(dead_code)]
-    pub fn list_recent_tasks(&self, limit: usize) -> AppResult<Vec<PersistedImportTask>> {
-        self.with_connection(|conn| {
-            let mut stmt = conn.prepare(
-                r#"
-            SELECT id, source_path, name, status, destination, error_message,
-                   files_count, total_size, content_type, started_at, completed_at, target_library
-            FROM import_tasks
-            ORDER BY started_at DESC
-            LIMIT ?1
-            "#,
-            )?;
-
-            let tasks = stmt
-                .query_map([limit], Self::map_row)?
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Ok(tasks)
-        })
-    }
-
     /// Lists tasks created within the last `days` days
     pub fn list_tasks_since_days(&self, days: i64) -> AppResult<Vec<PersistedImportTask>> {
         let cutoff = chrono::Utc::now()

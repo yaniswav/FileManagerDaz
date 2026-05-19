@@ -21,10 +21,6 @@ pub struct ManifestFile {
     pub relative_path: String,
     /// Target (usually "Content")
     pub target: String,
-    /// Action (usually "Install")
-    // kept as public API field for external integrations (consumed by DAZ-format readers)
-    #[allow(dead_code)]
-    pub action: String,
 }
 
 /// Parsed data from a Manifest.dsx file
@@ -105,12 +101,10 @@ pub fn parse_manifest(path: &Path) -> AppResult<ManifestData> {
                     }
                     b"File" => {
                         let target = attr_value(e, b"TARGET").unwrap_or_default();
-                        let action = attr_value(e, b"ACTION").unwrap_or_default();
                         if let Some(value) = attr_value(e, b"VALUE") {
                             files.push(ManifestFile {
                                 relative_path: strip_content_prefix(&value),
                                 target,
-                                action,
                             });
                         }
                     }

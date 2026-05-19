@@ -59,8 +59,8 @@ pub use anchors::{
 };
 #[allow(unused_imports)]
 pub use batch::{
-    process_batch_with_defaults, BatchItemFailure, BatchItemResult, BatchOperationResult,
-    BatchProgress, BatchStats, RobustBatchProcessor,
+    BatchItemFailure, BatchItemResult, BatchOperationResult, BatchProgress, BatchStats,
+    RobustBatchProcessor,
 };
 pub use normalize::{normalize_and_merge_batch, NormalizeBatchResult};
 #[allow(unused_imports)]
