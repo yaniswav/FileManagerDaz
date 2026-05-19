@@ -728,6 +728,8 @@ export interface LibraryStats {
   productsByType: TypeCount[];
   topVendors: VendorCount[];
   recentProducts: Product[];
+  growth30d: number;
+  growth90d: number;
 }
 
 /**

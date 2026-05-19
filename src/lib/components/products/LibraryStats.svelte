@@ -109,6 +109,20 @@
           <span class="stat-label">Top Vendors</span>
         </div>
       </div>
+      <div class="stat-card">
+        <span class="stat-icon">📈</span>
+        <div class="stat-info">
+          <span class="stat-value">{stats.growth30d.toLocaleString()}</span>
+          <span class="stat-label">Last 30 days</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-icon">📊</span>
+        <div class="stat-info">
+          <span class="stat-value">{stats.growth90d.toLocaleString()}</span>
+          <span class="stat-label">Last 90 days</span>
+        </div>
+      </div>
     </div>
 
     <!-- Two columns: types + vendors -->

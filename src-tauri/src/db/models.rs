@@ -174,6 +174,10 @@ pub struct LibraryStats {
     pub products_by_type: Vec<TypeCount>,
     pub top_vendors: Vec<VendorCount>,
     pub recent_products: Vec<Product>,
+    /// Products installed within the last 30 days.
+    pub growth_30d: i64,
+    /// Products installed within the last 90 days.
+    pub growth_90d: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
