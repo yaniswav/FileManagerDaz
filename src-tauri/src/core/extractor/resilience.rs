@@ -168,12 +168,6 @@ impl TimeoutGuard {
         Ok(())
     }
 
-    /// Get elapsed time
-    // kept as public API for external integrations (timing observers)
-    #[allow(dead_code)]
-    pub fn elapsed(&self) -> Duration {
-        self.start.elapsed()
-    }
 }
 
 /// (successes, failures) result of running a closure over a batch of items.
@@ -192,26 +186,46 @@ impl<T> BatchProcessor<T> {
     }
 
     /// Process all items, collecting results and errors separately
-    pub fn process_all<F, R>(self, mut process_fn: F) -> BatchProcessOutcome<T, R>
+    // kept as public API for external integrations (legacy callers without
+    // per-item completion needs).
+    #[allow(dead_code)]
+    pub fn process_all<F, R>(self, process_fn: F) -> BatchProcessOutcome<T, R>
     where
         F: FnMut(&T) -> AppResult<R>,
+    {
+        self.process_all_with_progress(process_fn, |_, _| {})
+    }
+
+    /// Same as [`process_all`] but invokes `on_item_done` exactly once per
+    /// item, **after** [`RetryStrategy`] has reached its final outcome.
+    ///
+    /// This lets callers track the definitive success/failure of each item
+    /// without double-counting intermediate retry attempts.
+    pub fn process_all_with_progress<F, R, C>(
+        self,
+        mut process_fn: F,
+        mut on_item_done: C,
+    ) -> BatchProcessOutcome<T, R>
+    where
+        F: FnMut(&T) -> AppResult<R>,
+        C: FnMut(&T, &AppResult<R>),
     {
         let mut successes = Vec::new();
         let mut failures = Vec::new();
 
         for item in self.items {
             let mut retry = RetryStrategy::new(self.config.clone());
+            let result = retry.execute(|| process_fn(&item));
 
-            match retry.execute(|| process_fn(&item)) {
-                Ok(result) => successes.push((item, result)),
+            on_item_done(&item, &result);
+
+            match result {
+                Ok(r) => successes.push((item, r)),
                 Err(error) => {
                     if self.config.skip_corrupted {
                         warn!("Skipping failed item: {}", error);
-                        failures.push((item, error));
-                    } else {
-                        // If not skipping, we could break here
-                        failures.push((item, error));
                     }
+                    failures.push((item, error));
                 }
             }
         }
