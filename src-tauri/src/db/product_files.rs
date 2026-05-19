@@ -55,28 +55,6 @@ pub fn init_product_files_table(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
-/// Insert file entries for a product (from parsed Manifest.dsx).
-/// Skips duplicates silently (INSERT OR IGNORE).
-// kept as public API for external integrations (manifest-driven indexers)
-#[allow(dead_code)]
-pub fn insert_product_files(
-    conn: &Connection,
-    product_id: i64,
-    files: &[(String, String)], // (relative_path, target)
-) -> AppResult<usize> {
-    let mut stmt = conn.prepare(
-        "INSERT OR IGNORE INTO product_files (product_id, relative_path, target) VALUES (?1, ?2, ?3)",
-    )?;
-
-    let mut count = 0;
-    for (path, target) in files {
-        count += stmt.execute(rusqlite::params![product_id, path, target])?;
-    }
-
-    debug!("Inserted {} file records for product {}", count, product_id);
-    Ok(count)
-}
-
 /// Get all files for a product.
 pub fn get_product_files(conn: &Connection, product_id: i64) -> AppResult<Vec<ProductFile>> {
     let mut stmt = conn.prepare(
@@ -174,19 +152,6 @@ pub fn insert_product_files_batch(
     Ok(count)
 }
 
-/// Delete all file records for a product (used when uninstalling).
-// kept as public API for external integrations (manual cleanup paths;
-// the standard uninstall path goes through CASCADE on products DELETE).
-#[allow(dead_code)]
-pub fn delete_product_files(conn: &Connection, product_id: i64) -> AppResult<usize> {
-    let count = conn.execute(
-        "DELETE FROM product_files WHERE product_id = ?1",
-        rusqlite::params![product_id],
-    )?;
-    debug!("Deleted {} file records for product {}", count, product_id);
-    Ok(count)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,7 +191,7 @@ mod tests {
             ("data/test.dsf".to_string(), "Content".to_string()),
             ("Runtime/Textures/t.jpg".to_string(), "Content".to_string()),
         ];
-        let count = insert_product_files(&conn, pid, &files).unwrap();
+        let count = insert_product_files_batch(&conn, pid, &files).unwrap();
         assert_eq!(count, 2);
 
         let result = get_product_files(&conn, pid).unwrap();
@@ -241,8 +206,8 @@ mod tests {
         let pid = insert_product(&conn, "Test");
 
         let files = vec![("data/test.dsf".to_string(), "Content".to_string())];
-        insert_product_files(&conn, pid, &files).unwrap();
-        let count = insert_product_files(&conn, pid, &files).unwrap();
+        insert_product_files_batch(&conn, pid, &files).unwrap();
+        let count = insert_product_files_batch(&conn, pid, &files).unwrap();
         assert_eq!(count, 0); // duplicate ignored
 
         let result = get_product_files(&conn, pid).unwrap();
@@ -259,31 +224,13 @@ mod tests {
             ("data/shared.dsf".to_string(), "Content".to_string()),
             ("data/unique_a.dsf".to_string(), "Content".to_string()),
         ];
-        insert_product_files(&conn, pid1, &files_a).unwrap();
+        insert_product_files_batch(&conn, pid1, &files_a).unwrap();
 
         let files_b = vec!["data/shared.dsf".to_string(), "data/new.dsf".to_string()];
         let conflicts = check_file_conflicts(&conn, &files_b, Some(pid2)).unwrap();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].relative_path, "data/shared.dsf");
         assert_eq!(conflicts[0].existing_product_name, "Product A");
-    }
-
-    #[test]
-    fn test_delete_product_files() {
-        let conn = setup_db();
-        let pid = insert_product(&conn, "Test");
-
-        let files = vec![
-            ("a.dsf".to_string(), "Content".to_string()),
-            ("b.dsf".to_string(), "Content".to_string()),
-        ];
-        insert_product_files(&conn, pid, &files).unwrap();
-
-        let deleted = delete_product_files(&conn, pid).unwrap();
-        assert_eq!(deleted, 2);
-
-        let result = get_product_files(&conn, pid).unwrap();
-        assert!(result.is_empty());
     }
 
     #[test]
@@ -294,7 +241,7 @@ mod tests {
 
         let pid = insert_product(&conn, "Test");
         let files = vec![("test.dsf".to_string(), "Content".to_string())];
-        insert_product_files(&conn, pid, &files).unwrap();
+        insert_product_files_batch(&conn, pid, &files).unwrap();
 
         conn.execute("DELETE FROM products WHERE id = ?1", rusqlite::params![pid])
             .unwrap();

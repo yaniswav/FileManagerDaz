@@ -39,10 +39,6 @@ pub struct WatchEvent {
 pub enum WatchEventType {
     /// New file created
     Created,
-    /// File modified (finished writing)
-    // kept as public API variant (emitted by future notify event handlers)
-    #[allow(dead_code)]
-    Modified,
     /// File removed
     Removed,
 }

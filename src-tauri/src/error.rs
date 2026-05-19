@@ -48,12 +48,6 @@ pub enum AppError {
     #[error("Unsupported archive format: {0}")]
     UnsupportedFormat(String),
 
-    /// Archive file is corrupted or malformed
-    // kept as part of the public error surface (consumed by frontend via ApiError mapping)
-    #[allow(dead_code)]
-    #[error("Corrupted or invalid archive: {0}")]
-    InvalidArchive(String),
-
     /// Error during ZIP extraction (via `zip` crate)
     #[error("ZIP extraction error: {0}")]
     ZipError(String),
@@ -149,7 +143,6 @@ impl From<&AppError> for ApiError {
 
             // Archive errors
             AppError::UnsupportedFormat(format) => ("UNSUPPORTED_FORMAT", Some(format.clone())),
-            AppError::InvalidArchive(msg) => ("INVALID_ARCHIVE", Some(msg.clone())),
             AppError::ZipError(msg) => ("ZIP_ERROR", Some(msg.clone())),
             AppError::SevenZipError(msg) => ("SEVENZ_ERROR", Some(msg.clone())),
             AppError::RarError(msg) => ("RAR_ERROR", Some(msg.clone())),
