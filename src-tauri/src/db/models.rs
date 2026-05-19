@@ -57,6 +57,8 @@ pub struct NewProduct {
     pub global_id: Option<String>,
     /// Vendor/artist name (from DSX metadata)
     pub vendor: Option<String>,
+    /// Cached thumbnail path (relative to product root, forward slashes).
+    pub thumbnail_path: Option<String>,
     /// Optional installed date override (ISO 8601).
     pub installed_at: Option<String>,
     pub tags: String,
@@ -74,6 +76,7 @@ impl NewProduct {
             content_type: None,
             global_id: None,
             vendor: None,
+            thumbnail_path: None,
             installed_at: None,
             tags: String::new(),
             files_count: 0,
@@ -114,6 +117,11 @@ impl NewProduct {
 
     pub fn with_global_id(mut self, global_id: impl Into<String>) -> Self {
         self.global_id = Some(global_id.into());
+        self
+    }
+
+    pub fn with_thumbnail(mut self, thumbnail_path: impl Into<String>) -> Self {
+        self.thumbnail_path = Some(thumbnail_path.into());
         self
     }
 
