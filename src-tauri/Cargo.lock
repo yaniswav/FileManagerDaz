@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "file-manager-daz"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "anyhow",
  "blake3",
