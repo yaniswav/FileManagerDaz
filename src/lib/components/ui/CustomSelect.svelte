@@ -29,7 +29,9 @@
   let open = $state(false);
   let focusedIndex = $state(-1);
   let triggerEl: HTMLButtonElement;
-  let listEl: HTMLDivElement;
+  // bind:this on the dropdown is inside `{#if open}` so the ref toggles
+  // between undefined and a DOM node — $state lets readers observe both.
+  let listEl: HTMLDivElement | undefined = $state();
   let wrapperEl: HTMLDivElement;
   let dropdownStyle = $state('');
 

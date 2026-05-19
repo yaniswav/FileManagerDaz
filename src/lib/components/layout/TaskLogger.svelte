@@ -2,7 +2,9 @@
   import { logStore, logPanelOpen, clearLog } from '$lib/stores/tasklog.svelte';
   import { onMount, tick } from 'svelte';
 
-  let scrollEl: HTMLDivElement;
+  // bind:this assigns this ref on mount; wrapping in $state lets the
+  // `$effect` below pick up the assignment and run the initial scroll.
+  let scrollEl: HTMLDivElement | undefined = $state();
   let autoScroll = $state(true);
 
   const entries = $derived(logStore.entries);
@@ -25,9 +27,10 @@
 
   // Auto-scroll when new entries arrive
   $effect(() => {
-    if (entries.length && autoScroll && scrollEl) {
+    const el = scrollEl;
+    if (entries.length && autoScroll && el) {
       tick().then(() => {
-        scrollEl.scrollTop = scrollEl.scrollHeight;
+        el.scrollTop = el.scrollHeight;
       });
     }
   });
