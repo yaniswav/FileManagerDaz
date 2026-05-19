@@ -751,7 +751,7 @@ fn select_and_cache_thumbnail(
         }
     }
 
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
     let source = match candidates.first() {
         Some((_, path)) => path,
         None => return Ok(None),

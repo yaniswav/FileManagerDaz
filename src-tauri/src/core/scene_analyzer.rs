@@ -158,7 +158,7 @@ pub fn analyze_scene(
             files_used: count,
         })
         .collect();
-    required_products.sort_by(|a, b| b.files_used.cmp(&a.files_used));
+    required_products.sort_by_key(|p| std::cmp::Reverse(p.files_used));
 
     let installed_count = installed_assets.len() + untracked_assets.len();
     let missing_count = missing_assets.len();
