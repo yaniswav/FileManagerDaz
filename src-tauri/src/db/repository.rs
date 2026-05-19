@@ -688,12 +688,32 @@ impl Database {
                 .filter_map(|r| r.ok())
                 .collect();
 
+            // Growth windows: count products installed in the last N days.
+            // `date()` extracts YYYY-MM-DD from RFC3339 strings, so the comparison
+            // works regardless of the timezone suffix or the space-vs-T separator.
+            let growth_30d: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM products \
+                 WHERE installed_at IS NOT NULL \
+                   AND date(installed_at) >= date('now', '-30 days')",
+                [],
+                |row| row.get(0),
+            )?;
+            let growth_90d: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM products \
+                 WHERE installed_at IS NOT NULL \
+                   AND date(installed_at) >= date('now', '-90 days')",
+                [],
+                |row| row.get(0),
+            )?;
+
             Ok(LibraryStats {
                 total_products,
                 total_size_bytes,
                 products_by_type,
                 top_vendors,
                 recent_products,
+                growth_30d,
+                growth_90d,
             })
         })
     }
