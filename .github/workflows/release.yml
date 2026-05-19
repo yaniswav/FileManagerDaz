@@ -101,3 +101,125 @@ jobs:
           prerelease: false
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      # ---------------------------------------------------------------------
+      # Workaround: tauri-action@v0 builds + signs the updater bundles but
+      # its asset filter only uploads the primary installers (.msi/.exe/...).
+      # The .sig files and the *.zip / *.tar.gz updater archives are left
+      # behind, which is why `latest.json` is never composed ("Signature
+      # not found for the updater JSON. Skipping upload..." in the logs).
+      # We re-upload them ourselves so the next job can build latest.json.
+      # ---------------------------------------------------------------------
+      - name: Upload missing updater artifacts (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in src-tauri/target/release/bundle/nsis/*.exe.sig \
+                   src-tauri/target/release/bundle/nsis/*.nsis.zip \
+                   src-tauri/target/release/bundle/nsis/*.nsis.zip.sig \
+                   src-tauri/target/release/bundle/msi/*.msi.sig; do
+            [ -f "$f" ] || continue
+            echo "Uploading: $f"
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+
+      - name: Upload missing updater artifacts (macOS)
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
+                   src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg.sig; do
+            [ -f "$f" ] || continue
+            echo "Uploading: $f"
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+
+      - name: Upload missing updater artifacts (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz \
+                   src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig; do
+            [ -f "$f" ] || continue
+            echo "Uploading: $f"
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+
+  # =============================================================================
+  # Compose the `latest.json` manifest that the in-app auto-updater fetches.
+  # Runs once after all 3 platforms have uploaded their bundles + signatures.
+  # =============================================================================
+  publish-updater-json:
+    name: Compose latest.json
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Compose and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Pull every .sig that the matrix jobs uploaded.
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          gh release download "$TAG" --repo "$REPO" --pattern "*.sig" || true
+          echo "Downloaded .sig files:"
+          ls -la
+
+          read_sig() {
+            local name="$1"
+            if [ -f "$name" ]; then cat "$name"; else echo ""; fi
+          }
+
+          # Asset naming matches Tauri 2's default bundler output.
+          DARWIN_SIG=$(read_sig "FileManagerDaz_aarch64.app.tar.gz.sig")
+          LINUX_SIG=$(read_sig "FileManagerDaz_${VERSION}_amd64.AppImage.tar.gz.sig")
+          WIN_SIG=$(read_sig "FileManagerDaz_${VERSION}_x64-setup.nsis.zip.sig")
+
+          DARWIN_URL="${BASE_URL}/FileManagerDaz_aarch64.app.tar.gz"
+          LINUX_URL="${BASE_URL}/FileManagerDaz_${VERSION}_amd64.AppImage.tar.gz"
+          WIN_URL="${BASE_URL}/FileManagerDaz_${VERSION}_x64-setup.nsis.zip"
+
+          # jq is preinstalled on ubuntu-latest and handles JSON escaping
+          # (notably the newlines inside .sig contents).
+          jq -n \
+            --arg version "$TAG" \
+            --arg pub_date "$PUB_DATE" \
+            --arg notes "See the release notes at ${BASE_URL}" \
+            --arg darwin_sig "$DARWIN_SIG" \
+            --arg darwin_url "$DARWIN_URL" \
+            --arg linux_sig "$LINUX_SIG" \
+            --arg linux_url "$LINUX_URL" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "$WIN_URL" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $darwin_sig, url: $darwin_url },
+                "linux-x86_64":   { signature: $linux_sig,  url: $linux_url },
+                "windows-x86_64": { signature: $win_sig,    url: $win_url }
+              }
+            }' > latest.json
+
+          echo "--- Composed latest.json ---"
+          cat latest.json
+
+          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
