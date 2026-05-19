@@ -13,13 +13,15 @@
   import TaskLogger from '$lib/components/layout/TaskLogger.svelte';
   import { initTaskListeners, destroyTaskListeners } from '$lib/stores/tasks.svelte';
   import { initLogListeners, destroyLogListeners } from '$lib/stores/tasklog.svelte';
-  import { initTheme, destroyTheme } from '$lib/stores/theme.svelte';
+  import { initTheme, destroyTheme, getTheme, setTheme, THEMES } from '$lib/stores/theme.svelte';
   import { formatFileSize, getAppConfig, pollWatchEvents, startWatching, getDownloadsFolder, scanWatchedFolder, type RecursiveExtractResult, type WatchEvent } from '$lib/api/commands';
   import { get } from 'svelte/store';
   import { completedTasks, type ImportTask, processMultipleSources } from '$lib/stores/imports';
   import { notify } from '$lib/stores/notifications';
   import { t, initLocale } from '$lib/i18n';
   import { checkForUpdates } from '$lib/api/updater.svelte';
+  import CommandPalette from '$lib/components/CommandPalette.svelte';
+  import type { PaletteAction } from '$lib/commands/palette';
 
   const WATCHER_POLL_MS = 3_000;
   const CONFIG_REFRESH_MS = 30_000;
@@ -27,6 +29,38 @@
   let activeTab: 'extract' | 'products' | 'tools' | 'settings' = $state('extract');
   let productsRefreshKey = $state(0);
   let showCloseDialog = $state(false);
+  let paletteOpen = $state(false);
+
+  function cycleTheme() {
+    const idx = THEMES.indexOf(getTheme());
+    const next = THEMES[(idx + 1) % THEMES.length];
+    setTheme(next);
+    notify.info('Theme', `Switched to ${next}`);
+  }
+
+  const paletteActions: PaletteAction[] = [
+    { id: 'nav-extract', label: 'Go to Extract', group: 'Navigate', icon: '📦',
+      action: () => { activeTab = 'extract'; } },
+    { id: 'nav-products', label: 'Go to Products', group: 'Navigate', icon: '🗂️',
+      action: () => { activeTab = 'products'; } },
+    { id: 'nav-tools', label: 'Go to Tools', group: 'Navigate', icon: '🛠️',
+      action: () => { activeTab = 'tools'; } },
+    { id: 'nav-settings', label: 'Go to Settings', group: 'Navigate', icon: '⚙️',
+      action: () => { activeTab = 'settings'; } },
+    { id: 'view-cycle-theme', label: 'Cycle theme', group: 'View', icon: '🌓',
+      action: cycleTheme },
+    { id: 'actions-refresh', label: 'Refresh products list', group: 'Actions', icon: '🔄',
+      action: () => { activeTab = 'products'; productsRefreshKey++; } },
+    { id: 'actions-check-updates', label: 'Check for updates', group: 'Actions', icon: '⬆️',
+      action: () => checkForUpdates(false) },
+  ];
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+      e.preventDefault();
+      paletteOpen = !paletteOpen;
+    }
+  }
   
   // Reactive state for completed tasks from store
   let recentTasks: ImportTask[] = $state([]);
@@ -259,10 +293,16 @@
   </section>
 </main>
 
+<svelte:window onkeydown={handleGlobalKeydown} />
+
 <Toast />
 <CloseDialog bind:visible={showCloseDialog} />
 <TaskLogger />
 <StatusBar />
+
+{#if paletteOpen}
+  <CommandPalette actions={paletteActions} onclose={() => (paletteOpen = false)} />
+{/if}
 
 <style>
   main {
